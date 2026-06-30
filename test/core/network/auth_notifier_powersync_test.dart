@@ -35,6 +35,8 @@ import 'package:wger/core/network/auth_notifier.dart';
 import 'package:wger/core/network/auth_state.dart';
 import 'package:wger/core/network/secure_token_storage.dart';
 import 'package:wger/core/shared_preferences.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart'
+    show PREFS_ACTIVE_WORKOUT;
 
 import '../../helpers/fake_auth_environment.dart';
 import '../../helpers/fake_connectivity.dart';
@@ -670,6 +672,40 @@ void main() {
       expect(container.read(authProvider).value?.status, AuthStatus.loggedOut);
       expect(await prefs.containsKey(PREFS_USER), false);
       expect(await prefs.getString(PREFS_DB_OWNER_USER_ID), '7');
+    });
+
+    test('a wiping logout clears the active-workout resume pointer (R4)', () async {
+      final prefs = PreferenceHelper.asyncPref;
+      await prefs.setString(PREFS_ACTIVE_WORKOUT, '{"routineId":1}');
+      // Logout keeps the local DB by default; opt out to exercise the wipe.
+      await prefs.setBool(PREFS_KEEP_DATA_ON_LOGOUT, false);
+
+      final container = makeContainer();
+      await container.read(authProvider.future);
+      await container.read(authProvider.notifier).revalidationDone;
+
+      await container.read(authProvider.notifier).logout();
+
+      expect(
+        await prefs.containsKey(PREFS_ACTIVE_WORKOUT),
+        false,
+        reason: 'a wiping logout must drop the device-local resume pointer',
+      );
+    });
+
+    test('a keep-data logout retains the active-workout resume pointer', () async {
+      final prefs = PreferenceHelper.asyncPref;
+      await prefs.setString(PREFS_ACTIVE_WORKOUT, '{"routineId":1}');
+      // Default keep-data-on-logout: the local DB and pointer survive so the
+      // same user can resume.
+
+      final container = makeContainer();
+      await container.read(authProvider.future);
+      await container.read(authProvider.notifier).revalidationDone;
+
+      await container.read(authProvider.notifier).logout();
+
+      expect(await prefs.containsKey(PREFS_ACTIVE_WORKOUT), true);
     });
   });
 

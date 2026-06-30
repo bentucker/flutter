@@ -139,6 +139,54 @@ void main() {
       expect(sessions.single.dayId, 42);
     });
 
+    test('stamps an existing day-less session with the routine day', () async {
+      await db
+          .into(db.workoutSessionTable)
+          .insert(
+            WorkoutSession(
+              id: 'day-less-session',
+              routineId: 100,
+              date: DateTime.utc(2026, 4, 15),
+            ).toCompanion(),
+          );
+
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+      await repo.addLocalDrift(log, dayId: 9);
+
+      final sessions = await readSessions();
+      expect(sessions, hasLength(1));
+      expect(log.sessionId, 'day-less-session');
+      expect(sessions.single.dayId, 9, reason: 'Existing day-less session gets its dayId set');
+    });
+
+    test('does not overwrite the day of a session that already has one', () async {
+      await db
+          .into(db.workoutSessionTable)
+          .insert(
+            WorkoutSession(
+              id: 'session-with-day',
+              routineId: 100,
+              dayId: 3,
+              date: DateTime.utc(2026, 4, 15),
+            ).toCompanion(),
+          );
+
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+      await repo.addLocalDrift(log, dayId: 9);
+
+      final sessions = await readSessions();
+      expect(sessions.single.dayId, 3, reason: 'An already-stamped session is left untouched');
+    });
+
+    test('leaves the session day null when the log carries no day', () async {
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+
+      await repo.addLocalDrift(log);
+
+      final sessions = await readSessions();
+      expect(sessions.single.dayId, isNull);
+    });
+
     test('does not reuse a session from a different day', () async {
       await db
           .into(db.workoutSessionTable)

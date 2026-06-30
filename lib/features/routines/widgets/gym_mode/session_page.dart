@@ -23,6 +23,7 @@ import 'package:wger/core/consts.dart';
 import 'package:wger/core/date.dart';
 import 'package:wger/core/widgets/async_value_widget.dart';
 import 'package:wger/features/routines/models/session.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/workout_session_notifier.dart';
 import 'package:wger/features/routines/widgets/forms/session.dart';
@@ -76,10 +77,15 @@ class _SessionPageState extends ConsumerState<SessionPage> {
                     padding: const EdgeInsets.symmetric(horizontal: 15),
                     child: SessionForm(
                       gymState.routine.id,
-                      onSaved: () => widget._controller.nextPage(
-                        duration: DEFAULT_ANIMATION_DURATION,
-                        curve: DEFAULT_ANIMATION_CURVE,
-                      ),
+                      onSaved: () {
+                        // Explicit save = workout finished: drop the resume
+                        // pointer so it is no longer offered.
+                        ref.read(activeWorkoutProvider.notifier).finish();
+                        widget._controller.nextPage(
+                          duration: DEFAULT_ANIMATION_DURATION,
+                          curve: DEFAULT_ANIMATION_CURVE,
+                        );
+                      },
                       session: session,
                     ),
                   ),

@@ -24,6 +24,7 @@ import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/widgets/async_value_widget.dart';
 import 'package:wger/core/widgets/core.dart';
 import 'package:wger/core/widgets/dashboard/widgets/nothing_found.dart';
+import 'package:wger/core/widgets/dashboard/widgets/resume_workout.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/features/routines/models/day_data.dart';
 import 'package:wger/features/routines/models/routine.dart';
@@ -91,7 +92,7 @@ class _DashboardRoutineWidgetState extends ConsumerState<DashboardRoutineWidget>
         ? ref.watch(routineHydrationProvider(currentId))
         : null;
 
-    return AsyncValueWidget<RoutinesState>(
+    final routineCard = AsyncValueWidget<RoutinesState>(
       value: asyncState,
       loggerName: 'DashboardRoutineWidget',
       loading: _shell(
@@ -203,6 +204,11 @@ class _DashboardRoutineWidgetState extends ConsumerState<DashboardRoutineWidget>
           ),
         );
       },
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [const ResumeWorkoutCard(), routineCard],
     );
   }
 }

@@ -47,6 +47,8 @@ import 'package:wger/features/account/providers/account_notifier.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/gallery/providers/gallery_notifier.dart';
 import 'package:wger/features/nutrition/providers/nutrition_notifier.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart'
+    show PREFS_ACTIVE_WORKOUT;
 import 'package:wger/features/routines/providers/routines_notifier.dart';
 import 'package:wger/features/trophies/providers/trophy_notifier.dart';
 
@@ -974,6 +976,16 @@ class AuthNotifier extends _$AuthNotifier {
   /// Throws if the wipe fails. Callers must abort before advancing the DB
   /// owner marker, otherwise the previous user's data stay on disk
   Future<void> _wipeLocalDb() async {
+    // The device-local active-workout resume pointer is part of the local data
+    // set; drop it whenever local data is wiped (full logout or user switch) so
+    // a different user on this device never inherits a stale in-progress
+    // workout (design R4). Independent of, and not blocked by, the DB wipe.
+    try {
+      await PreferenceHelper.asyncPref.remove(PREFS_ACTIVE_WORKOUT);
+    } catch (e, s) {
+      _logger.warning('Could not clear active-workout pointer on wipe', e, s);
+    }
+
     final db = builtPowerSyncInstance;
     if (db != null) {
       try {

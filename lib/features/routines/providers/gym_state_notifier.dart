@@ -16,27 +16,40 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 import 'package:collection/collection.dart';
 import 'package:logging/logging.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:wger/core/consts.dart';
+import 'package:wger/core/date.dart';
 import 'package:wger/core/shared_preferences.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
+import 'package:wger/features/routines/models/active_workout.dart';
 import 'package:wger/features/routines/models/log.dart';
 import 'package:wger/features/routines/models/routine.dart';
 import 'package:wger/features/routines/models/set_config_data.dart';
 import 'package:wger/features/routines/models/weight_unit.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_log_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
+import 'package:wger/features/routines/providers/workout_session_repository.dart';
 
 part 'gym_state_notifier.g.dart';
 
 @Riverpod(keepAlive: true)
 class GymStateNotifier extends _$GymStateNotifier {
   final _logger = Logger('GymStateNotifier');
+
+  /// In-memory snapshot of how many logs have been persisted for each
+  /// `(slotEntryId, exerciseId)` group of the current session. Loaded once per
+  /// gym-mode entry by [restoreCompletionFromLogs] and kept current by
+  /// [markSlotPageAsDone]. This lets [calculatePages] re-derive completion
+  /// synchronously (no DB read) so settings toggles keep the ticks.
+  final Map<(int?, int), int> _logCountsBySlot = {};
 
   @override
   GymModeState build() {
@@ -212,9 +225,83 @@ class GymStateNotifier extends _$GymStateNotifier {
     pages.add(PageEntry(type: PageType.session, pageIndex: pageIndex));
     pages.add(PageEntry(type: PageType.workoutSummary, pageIndex: pageIndex + 1));
 
-    state = state.copyWith(pages: pages);
+    // Apply the in-memory completion snapshot so a rebuild (e.g. a settings
+    // toggle mid-workout) keeps the per-slot done ticks without a DB read.
+    state = state.copyWith(pages: _deriveCompletion(pages));
     // print(readPageStructure());
     _logger.finer('Initialized ${state.pages.length} pages');
+  }
+
+  /// Pure, synchronous derivation of completion from [_logCountsBySlot]: marks
+  /// the first `k` log slot pages of each `(slotEntryId, exerciseId)` group as
+  /// done, where `k` is the number of persisted logs for that group.
+  List<PageEntry> _deriveCompletion(List<PageEntry> pages) {
+    if (_logCountsBySlot.isEmpty) {
+      return pages;
+    }
+    final remaining = Map.of(_logCountsBySlot);
+    return pages.map((page) {
+      if (page.type != PageType.set) {
+        return page;
+      }
+      final slotPages = page.slotPages.map((sp) {
+        if (sp.type != SlotPageType.log || sp.setConfigData == null) {
+          return sp;
+        }
+        final key = (sp.setConfigData!.slotEntryId, sp.setConfigData!.exercise.id);
+        final count = remaining[key] ?? 0;
+        if (count > 0) {
+          remaining[key] = count - 1;
+          return sp.copyWith(logDone: true);
+        }
+        return sp;
+      }).toList();
+      return page.copyWith(slotPages: slotPages);
+    }).toList();
+  }
+
+  /// Seeds [_logCountsBySlot] from the logs already persisted for the current
+  /// day's session and re-derives completion. This is the only async/DB-touching
+  /// method here; it is called once per gym-mode entry (after [calculatePages])
+  /// and never from the synchronous settings setters.
+  Future<void> restoreCompletionFromLogs() async {
+    // Read the current session snapshot directly from the repository stream's
+    // first emission. We avoid `workoutSessionProvider.future` here because that
+    // keep-alive StreamNotifier only resolves while it has an active listener,
+    // and during gym-mode entry the session page is not mounted yet.
+    final sessions = await ref.read(workoutSessionRepositoryProvider).watchAllDrift().first;
+    final now = clock.now();
+    final sessionsToday = sessions
+        .where((s) => s.date.isSameDayAs(now) && s.routineId == state.routine.id)
+        .toList();
+
+    // Prefer the session stamped with the routine day currently being performed
+    // (sessions now carry `dayId`). Fall back to any session for this
+    // (routine, calendar-date) for legacy/day-less rows.
+    final today =
+        sessionsToday.firstWhereOrNull((s) => s.dayId == state.dayId) ?? sessionsToday.firstOrNull;
+
+    // Defence in depth: only count logs whose (slotEntryId, exerciseId) belongs
+    // to the current day's page tree, so a different routine-day that shares the
+    // same (routine, calendar-date) session row can never contaminate completion.
+    final validKeys = <(int?, int)>{
+      for (final page in state.pages)
+        for (final sp in page.slotPages)
+          if (sp.type == SlotPageType.log && sp.setConfigData != null)
+            (sp.setConfigData!.slotEntryId, sp.setConfigData!.exercise.id),
+    };
+
+    _logCountsBySlot.clear();
+    for (final log in today?.logs ?? const <Log>[]) {
+      final key = (log.slotEntryId, log.exerciseId);
+      if (!validKeys.contains(key)) {
+        continue;
+      }
+      _logCountsBySlot[key] = (_logCountsBySlot[key] ?? 0) + 1;
+    }
+
+    state = state.copyWith(pages: _deriveCompletion(state.pages));
+    _logger.fine('Restored completion from ${_logCountsBySlot.length} log group(s)');
   }
 
   // Recalculates the indices of all pages
@@ -272,16 +359,35 @@ class GymStateNotifier extends _$GymStateNotifier {
   }
 
   int initData(Routine routine, int dayId, int iteration) {
-    final validUntil = state.validUntil;
+    final now = clock.now();
     final currentPage = state.currentPage;
 
     final shouldReset =
         (!state.isInitialized || state.isInitialized && dayId != state.dayId) ||
-        validUntil.isBefore(clock.now());
+        state.validUntil.isBefore(now);
     if (shouldReset) {
       _logger.fine('Day ID mismatch or expired validUntil date. Resetting to page 0.');
     }
-    final initialPage = shouldReset ? 0 : currentPage;
+
+    // On a reset (e.g. fresh app start) honor a matching, unexpired persisted
+    // pointer's cursor instead of jumping to page 0. On a same-process re-entry
+    // we keep the in-memory cursor as before.
+    final pointer = ref.read(activeWorkoutProvider).value;
+    final pointerMatches =
+        pointer != null &&
+        pointer.routineId == routine.id &&
+        pointer.dayId == dayId &&
+        pointer.validUntil.isAfter(now);
+
+    // Anchor the resume window to workout start: a brand-new workout gets a full
+    // DEFAULT_DURATION window (so the pointer is never born already expired, even
+    // when `initData` resets because the *previous* window had elapsed); resuming
+    // a matching pointer keeps its original window.
+    final validUntil = shouldReset
+        ? (pointerMatches ? pointer.validUntil : now.add(DEFAULT_DURATION))
+        : state.validUntil;
+
+    var initialPage = shouldReset ? (pointerMatches ? pointer.currentPage : 0) : currentPage;
 
     // set dayId and initial page
     state = state.copyWith(
@@ -290,6 +396,7 @@ class GymStateNotifier extends _$GymStateNotifier {
       routine: routine,
       iteration: iteration,
       currentPage: initialPage,
+      validUntil: validUntil,
       // A fresh workout also restarts the elapsed timer
       workoutStart: shouldReset ? clock.now() : null,
     );
@@ -299,6 +406,36 @@ class GymStateNotifier extends _$GymStateNotifier {
     // existing state like the exercises that have already been done
     if (shouldReset) {
       calculatePages();
+
+      // Never resume directly onto the summary (last) page: clamp to the last
+      // "real" page (the session page at totalPages - 2 at most).
+      final maxResumablePage = (state.totalPages - 2).clamp(0, state.totalPages);
+      if (initialPage > maxResumablePage) {
+        initialPage = maxResumablePage;
+        state = state.copyWith(currentPage: initialPage);
+      }
+    }
+
+    // Persist (or refresh) the active-workout pointer so the workout can be
+    // resumed after an app restart. A matching pointer is left untouched (its
+    // cursor is maintained by setCurrentPage); otherwise a fresh one is written
+    // with a freshly-anchored window.
+    if (!pointerMatches) {
+      unawaited(
+        ref
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: routine.id!,
+                dayId: dayId,
+                iteration: iteration,
+                startedAt: now,
+                startTime: state.startTime,
+                currentPage: initialPage,
+                validUntil: validUntil,
+              ),
+            ),
+      );
     }
 
     _logger.fine('Initialized GymModeState, initialPage=$initialPage');
@@ -307,6 +444,9 @@ class GymStateNotifier extends _$GymStateNotifier {
 
   void setCurrentPage(int page) {
     state = state.copyWith(currentPage: page);
+
+    // Keep the persisted resume cursor in sync.
+    unawaited(ref.read(activeWorkoutProvider.notifier).updateCursor(page));
 
     // Ensure that there is a log entry for the current slot entry
     final slotEntryPage = state.getSlotEntryPageByIndex();
@@ -370,6 +510,15 @@ class GymStateNotifier extends _$GymStateNotifier {
     if (slotPage == null) {
       _logger.warning('No slot page found for UUID $uuid');
       return;
+    }
+
+    // Keep the completion snapshot in lock-step with the persisted logs so a
+    // later calculatePages() (e.g. a settings toggle) re-ticks this set.
+    final cfg = slotPage.setConfigData;
+    if (cfg != null) {
+      final key = (cfg.slotEntryId, cfg.exercise.id);
+      final current = _logCountsBySlot[key] ?? 0;
+      _logCountsBySlot[key] = isDone ? current + 1 : (current > 0 ? current - 1 : 0);
     }
 
     final updatedSlotPage = slotPage.copyWith(logDone: isDone);
@@ -489,6 +638,9 @@ class GymStateNotifier extends _$GymStateNotifier {
 
   void clear() {
     _logger.fine('Clearing state');
+    // In-memory reset only: this does NOT delete the persistent resume pointer
+    // (that is driven by an explicit session save). See ActiveWorkoutNotifier.
+    _logCountsBySlot.clear();
     state = state.copyWith(
       isInitialized: false,
       pages: [],

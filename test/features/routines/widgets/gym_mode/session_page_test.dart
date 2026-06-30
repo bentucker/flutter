@@ -22,8 +22,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:wger/core/shared_preferences.dart';
+import 'package:wger/features/routines/models/active_workout.dart';
 import 'package:wger/features/routines/models/routine.dart';
 import 'package:wger/features/routines/models/session.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/workout_session_repository.dart';
 import 'package:wger/features/routines/widgets/gym_mode/session_page.dart';
@@ -39,7 +44,12 @@ void main() {
   late GymStateNotifier notifier;
   late ProviderContainer container;
 
-  setUp(() {
+  setUp(() async {
+    // The session page now clears the active-workout pointer on save, which
+    // touches shared_preferences.
+    SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
+    await PreferenceHelper.asyncPref.clear();
+
     testRoutine = getTestRoutine();
     mockRepository = MockWorkoutSessionRepository();
     when(mockRepository.watchAllDrift()).thenAnswer(
@@ -162,5 +172,43 @@ void main() {
       expect(captured.timeStart, equals(const TimeOfDay(hour: 10, minute: 0)));
       expect(captured.timeEnd, equals(const TimeOfDay(hour: 12, minute: 34)));
     });
+  });
+
+  testWidgets('explicit session save clears the active-workout resume pointer', (
+    WidgetTester tester,
+  ) async {
+    // Seed an in-progress pointer.
+    await container
+        .read(activeWorkoutProvider.notifier)
+        .start(
+          ActiveWorkout(
+            routineId: 1,
+            dayId: 1,
+            iteration: 1,
+            startedAt: DateTime(2021, 5, 1),
+            currentPage: 3,
+            validUntil: DateTime(2021, 5, 1, 5),
+          ),
+        );
+    expect(container.read(activeWorkoutProvider).value, isNotNull);
+
+    // The save flow persists the session through the repository; stub the
+    // write so the handler completes and reaches the finish() call.
+    when(
+      mockRepository.addLocalDrift(any),
+    ).thenAnswer((inv) async => inv.positionalArguments.first as WorkoutSession);
+
+    await tester.pumpWidget(renderSessionPage());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('save-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      await PreferenceHelper.asyncPref.containsKey(PREFS_ACTIVE_WORKOUT),
+      false,
+      reason: 'saving the session finishes the workout and drops the resume pointer',
+    );
+    expect(container.read(activeWorkoutProvider).value, isNull);
   });
 }

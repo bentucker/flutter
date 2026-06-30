@@ -26,6 +26,7 @@ import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/core/widgets/progress_indicator.dart';
 import 'package:wger/features/routines/models/routine.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
@@ -94,6 +95,10 @@ class _GymModeState extends ConsumerState<GymMode> {
       routine = cached;
     }
 
+    // Ensure the persisted resume pointer is loaded before initData reads it,
+    // so a cold-start resume lands on the saved cursor rather than page 0.
+    await ref.read(activeWorkoutProvider.future);
+
     final gymViewModel = ref.read(gymStateProvider.notifier);
     final initialPage = gymViewModel.initData(
       routine,
@@ -102,6 +107,16 @@ class _GymModeState extends ConsumerState<GymMode> {
     );
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();
+
+    // Reconstruct per-slot completion from the already-persisted logs so the
+    // progress overlay survives app restart and in-app re-entry. This is a
+    // best-effort enhancement: a transient DB/stream error here must never block
+    // entering the workout, so failures are logged and swallowed.
+    try {
+      await gymViewModel.restoreCompletionFromLogs();
+    } catch (e, s) {
+      widget._logger.warning('Could not restore completion from logs, continuing', e, s);
+    }
 
     return initialPage;
   }

@@ -614,6 +614,10 @@
   "@start": {
     "description": "Label on button to start the gym mode (i.e., an imperative)"
   },
+  "resumeWorkout": "Resume workout",
+  "@resumeWorkout": {
+    "description": "Label on the banner/button that resumes an in-progress gym-mode workout"
+  },
   "time": "Time",
   "@time": {
     "description": "The time of a meal or workout"

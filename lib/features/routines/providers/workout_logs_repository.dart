@@ -136,6 +136,16 @@ class WorkoutLogRepository {
 
         if (existing != null) {
           log.sessionId = existing.id;
+
+          // Stamp a previously day-less session with the routine day now that
+          // we know it. Without this the session syncs with `day = null`, which
+          // breaks the backend's log-driven routine scheduling
+          // (`Day.need_logs_to_advance`).
+          if (existing.dayId == null && dayId != null) {
+            await (_db.update(_db.workoutSessionTable)..where((t) => t.id.equals(existing.id!)))
+                .write(WorkoutSessionTableCompanion(dayId: Value(dayId)));
+            _logger.finer('Stamped session ${existing.id} with day $dayId');
+          }
         } else {
           final newSession = WorkoutSession(
             routineId: log.routineId,

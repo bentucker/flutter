@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,21 +26,28 @@ import 'package:mockito/mockito.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wger/core/shared_preferences.dart';
+import 'package:wger/database/powersync/database.dart';
 import 'package:wger/features/account/models/user_profile.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/account/providers/user_profile_repository.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
+import 'package:wger/features/routines/models/active_workout.dart';
 import 'package:wger/features/routines/models/day.dart';
 import 'package:wger/features/routines/models/day_data.dart';
+import 'package:wger/features/routines/models/log.dart';
 import 'package:wger/features/routines/models/routine.dart';
+import 'package:wger/features/routines/models/session.dart';
 import 'package:wger/features/routines/models/set_config_data.dart';
 import 'package:wger/features/routines/models/slot_data.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
+import 'package:wger/features/routines/providers/workout_session_repository.dart';
 
 import '../../../../test_data/exercises.dart';
 import '../../../../test_data/routines.dart';
+import '../../../helpers/in_memory_drift.dart';
 import '../helpers/routine_form_test_overrides.dart';
 
 void main() {
@@ -625,4 +634,550 @@ void main() {
       expect(state.copyWith(clearLogScopeWeeks: true).logScopeWeeks, isNull);
     });
   });
+
+  group('GymStateNotifier.restoreCompletionFromLogs', () {
+    late DriftPowersyncDatabase db;
+    late ProviderContainer container;
+    late GymStateNotifier sut;
+
+    // The first day of the test routine (dayId 1) has two slots:
+    //  - slot 0: exercise id 1, slotEntryId 1, 3 sets
+    //  - slot 1: exercise id 6, slotEntryId 1, 3 sets
+    WorkoutSession sessionWithLogs(List<int> exerciseIds) {
+      final session = WorkoutSession(
+        id: 's1',
+        routineId: 1,
+        dayId: 1,
+        date: clock.now(),
+        logs: [
+          for (final exerciseId in exerciseIds)
+            Log(
+              exerciseId: exerciseId,
+              routineId: 1,
+              sessionId: 's1',
+              slotEntryId: 1,
+              weight: 50,
+              repetitions: 5,
+              date: clock.now(),
+            ),
+        ],
+      );
+      return session;
+    }
+
+    Future<void> bootstrap(List<WorkoutSession> sessions) async {
+      SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
+      db = await openTestDatabase();
+      container = ProviderContainer(
+        overrides: [
+          workoutSessionRepositoryProvider.overrideWithValue(_FakeSessionRepo(db, sessions)),
+        ],
+      );
+      sut = container.read(gymStateProvider.notifier);
+      sut.state = sut.state.copyWith(
+        // Keep the page tree simple: only log pages, no overview/timer.
+        showExercisePages: false,
+        showTimerPages: false,
+        dayId: 1,
+        iteration: 1,
+        routine: getTestRoutine(),
+      );
+      sut.calculatePages();
+    }
+
+    tearDown(() async {
+      container.dispose();
+      await db.close();
+    });
+
+    List<SlotPageEntry> logPagesOfSlot(int slotIndex) => sut.state.pages
+        .where((p) => p.type == PageType.set)
+        .toList()[slotIndex]
+        .slotPages
+        .where((s) => s.type == SlotPageType.log)
+        .toList();
+
+    test('marks the first k log pages of each group done from persisted logs', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        // 1 log for slot 0 (exercise 1), 2 logs for slot 1 (exercise 6).
+        await bootstrap([
+          sessionWithLogs([1, 6, 6]),
+        ]);
+
+        // Nothing is done before restoring.
+        expect(
+          sut.state.pages.expand((p) => p.slotPages).where((s) => s.logDone),
+          isEmpty,
+        );
+
+        await sut.restoreCompletionFromLogs();
+
+        final slot0 = logPagesOfSlot(0);
+        final slot1 = logPagesOfSlot(1);
+        expect(slot0.where((s) => s.logDone).length, 1);
+        expect(slot0[0].logDone, true, reason: 'first set of slot 0 is done');
+        expect(slot0[1].logDone, false);
+        expect(slot1.where((s) => s.logDone).length, 2);
+        expect(slot1[0].logDone, true);
+        expect(slot1[1].logDone, true);
+        expect(slot1[2].logDone, false);
+      });
+    });
+
+    test('completion is rebuilt after a simulated re-entry (calculatePages + restore)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await bootstrap([
+          sessionWithLogs([1]),
+        ]);
+
+        // Simulate re-entry: the page tree is rebuilt fresh (logDone=false)...
+        sut.calculatePages();
+        expect(logPagesOfSlot(0)[0].logDone, false);
+
+        // ...then completion is reconstructed from the persisted log.
+        await sut.restoreCompletionFromLogs();
+        expect(logPagesOfSlot(0)[0].logDone, true);
+      });
+    });
+
+    test('a set logged after entry survives a settings toggle (snapshot maintained)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await bootstrap([
+          sessionWithLogs([1]),
+        ]);
+        await sut.restoreCompletionFromLogs();
+        expect(logPagesOfSlot(0)[0].logDone, true);
+
+        // Simulate logging a second set mid-session.
+        sut.markSlotPageAsDone(logPagesOfSlot(0)[1].uuid, isDone: true);
+
+        // Toggling a setting rebuilds the page tree; the snapshot must re-tick
+        // both sets without any extra DB read.
+        sut.setShowTimerPages(true);
+
+        final slot0 = logPagesOfSlot(0);
+        expect(
+          slot0.where((s) => s.logDone).length,
+          2,
+          reason: 'restored set + after-entry set both stay ticked after a toggle',
+        );
+
+        // setShowTimerPages fires an unawaited _savePrefs; let it settle before
+        // the container is disposed in tearDown.
+        await pumpEventQueue();
+      });
+    });
+
+    test('prefers the session matching the current dayId (no cross-day contamination)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        // A *different* routine day trained the same calendar date: it shares
+        // the (routine, date) key space and even reuses slotEntryId/exerciseId,
+        // so only matching on dayId keeps it from over-completing the current
+        // day's slots.
+        final dayTwoSession = WorkoutSession(
+          id: 's2',
+          routineId: 1,
+          dayId: 2,
+          date: clock.now(),
+          logs: [
+            for (var i = 0; i < 3; i++)
+              Log(
+                exerciseId: 1,
+                routineId: 1,
+                sessionId: 's2',
+                slotEntryId: 1,
+                weight: 50,
+                repetitions: 5,
+                date: clock.now(),
+              ),
+          ],
+        );
+        final dayOneSession = sessionWithLogs([1]); // dayId 1, a single log
+
+        // Return the day-2 session FIRST so a naive firstOrNull would pick it.
+        await bootstrap([dayTwoSession, dayOneSession]);
+
+        await sut.restoreCompletionFromLogs();
+
+        final slot0 = logPagesOfSlot(0);
+        expect(
+          slot0.where((s) => s.logDone).length,
+          1,
+          reason: 'uses the dayId-1 session (1 log), not the day-2 session (3 logs)',
+        );
+        expect(slot0[0].logDone, true);
+      });
+    });
+
+    test('keys completion on (slotEntryId, exerciseId), not exerciseId alone', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        final exercise = getTestExercises()[0]; // id 1
+        // A single log for the *second* slot entry (slotEntryId 20).
+        final session = WorkoutSession(
+          id: 's1',
+          routineId: 1,
+          dayId: 1,
+          date: clock.now(),
+          logs: [
+            Log(
+              exerciseId: exercise.id,
+              routineId: 1,
+              sessionId: 's1',
+              slotEntryId: 20,
+              weight: 50,
+              repetitions: 5,
+              date: clock.now(),
+            ),
+          ],
+        );
+        await bootstrap([session]);
+
+        // Two log pages with the SAME exercise but DIFFERENT slotEntryId (e.g. a
+        // repeated exercise / superset across two slots).
+        SlotPageEntry logPage(int slotEntryId, int pageIndex) => SlotPageEntry(
+          type: SlotPageType.log,
+          pageIndex: pageIndex,
+          setIndex: pageIndex,
+          setConfigData: SetConfigData(
+            textRepr: '-/-',
+            exerciseId: exercise.id,
+            exercise: exercise,
+            slotEntryId: slotEntryId,
+          ),
+        );
+        sut.state = sut.state.copyWith(
+          pages: [
+            PageEntry(
+              type: PageType.set,
+              pageIndex: 0,
+              slotPages: [logPage(10, 0), logPage(20, 1)],
+            ),
+          ],
+        );
+
+        await sut.restoreCompletionFromLogs();
+
+        final logs = sut.state.pages.first.slotPages;
+        // The log targets slotEntryId 20, so only that page is done — keying on
+        // exerciseId alone would (wrongly) mark the first page (slotEntryId 10).
+        expect(logs[0].logDone, false, reason: 'slotEntryId 10 page must stay undone');
+        expect(logs[1].logDone, true, reason: 'slotEntryId 20 page is the one logged');
+      });
+    });
+
+    test('markSlotPageAsDone undo decrements the snapshot so a toggle un-ticks', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await bootstrap([
+          sessionWithLogs([1]),
+        ]);
+        await sut.restoreCompletionFromLogs();
+        expect(logPagesOfSlot(0)[0].logDone, true);
+
+        // Undo the set: this must decrement the in-memory snapshot.
+        sut.markSlotPageAsDone(logPagesOfSlot(0)[0].uuid, isDone: false);
+        expect(logPagesOfSlot(0)[0].logDone, false);
+
+        // A settings toggle rebuilds the page tree from the snapshot; the set
+        // must stay un-ticked (i.e. the decrement actually happened).
+        sut.setShowTimerPages(true);
+        expect(
+          logPagesOfSlot(0)[0].logDone,
+          false,
+          reason: 'undo decremented the snapshot, so the set is not re-ticked',
+        );
+
+        await pumpEventQueue();
+      });
+    });
+
+    test('clamps completion when there are more logs than prescribed sets', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        // Slot 0 prescribes 3 sets; persist 5 logs for it.
+        await bootstrap([
+          sessionWithLogs([1, 1, 1, 1, 1]),
+        ]);
+
+        await sut.restoreCompletionFromLogs();
+
+        final slot0 = logPagesOfSlot(0);
+        expect(slot0.length, 3);
+        expect(
+          slot0.every((s) => s.logDone),
+          true,
+          reason: 'all 3 prescribed sets are done and the 2 extra logs are ignored',
+        );
+      });
+    });
+  });
+
+  group('GymStateNotifier.restoreCompletionFromLogs (live stream)', () {
+    test('resolves on the first emission of a non-closing stream', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
+        final db = await openTestDatabase();
+        addTearDown(db.close);
+
+        // A controller that emits but is never closed (mirrors the real drift
+        // watch stream, which stays open for the session lifetime).
+        final controller = StreamController<List<WorkoutSession>>();
+        addTearDown(controller.close);
+
+        final container = ProviderContainer(
+          overrides: [
+            workoutSessionRepositoryProvider.overrideWithValue(
+              _StreamSessionRepo(db, controller.stream),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final sut = container.read(gymStateProvider.notifier);
+        sut.state = sut.state.copyWith(
+          showExercisePages: false,
+          showTimerPages: false,
+          dayId: 1,
+          iteration: 1,
+          routine: getTestRoutine(),
+        );
+        sut.calculatePages();
+
+        final session = WorkoutSession(
+          id: 's1',
+          routineId: 1,
+          dayId: 1,
+          date: clock.now(),
+          logs: [
+            Log(
+              exerciseId: 1,
+              routineId: 1,
+              sessionId: 's1',
+              slotEntryId: 1,
+              weight: 50,
+              repetitions: 5,
+              date: clock.now(),
+            ),
+          ],
+        );
+        // Emit one snapshot, but never close the stream.
+        controller.add([session]);
+
+        // Must resolve on the first emission rather than waiting for close.
+        // `completes` asserts the future finishes without relying on a tight
+        // wall-clock budget; a genuine hang is caught by the test harness's own
+        // timeout instead of a flaky 5s deadline.
+        await expectLater(sut.restoreCompletionFromLogs(), completes);
+
+        final slot0 = sut.state.pages
+            .where((p) => p.type == PageType.set)
+            .first
+            .slotPages
+            .where((s) => s.type == SlotPageType.log)
+            .toList();
+        expect(slot0[0].logDone, true);
+      });
+    });
+  });
+
+  group('GymStateNotifier.initData resume cursor', () {
+    late ProviderContainer container;
+
+    setUp(() async {
+      SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
+      // `PreferenceHelper.asyncPref` binds its backing store at construction, so
+      // clear that exact singleton instance to avoid bleed from a prior test.
+      await PreferenceHelper.asyncPref.clear();
+      container = ProviderContainer();
+    });
+
+    tearDown(() => container.dispose());
+
+    test('restores the cursor from a matching persisted pointer on reset', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 1,
+                dayId: 1,
+                iteration: 1,
+                startedAt: clock.now(),
+                currentPage: 5,
+                validUntil: clock.now().add(const Duration(hours: 2)),
+              ),
+            );
+        // Ensure the pointer is loaded before initData reads it synchronously.
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        expect(initialPage, 5, reason: 'cursor restored from the pointer');
+        expect(sut.state.currentPage, 5);
+      });
+    });
+
+    test('starts at page 0 when no pointer matches', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        // No pointer persisted.
+        expect(await container.read(activeWorkoutProvider.future), isNull);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        expect(initialPage, 0);
+
+        // Let the fire-and-forget pointer write settle before disposal.
+        await Future<void>.delayed(Duration.zero);
+      });
+    });
+
+    test('writes a freshly-anchored pointer even when the prior window expired', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        // No pointer persisted yet; simulate a stale in-memory window so the
+        // pointer write must NOT reuse it (the path where Issue 1's bug bit).
+        final sut = container.read(gymStateProvider.notifier);
+        sut.state = sut.state.copyWith(
+          dayId: 1,
+          iteration: 1,
+          routine: getTestRoutine(),
+          validUntil: clock.now().subtract(const Duration(hours: 1)),
+        );
+
+        sut.initData(getTestRoutine(), 1, 1);
+
+        // Let the fire-and-forget start() settle.
+        await pumpEventQueue();
+
+        final written = container.read(activeWorkoutProvider).value;
+        expect(written, isNotNull);
+        expect(
+          written!.validUntil.isAfter(clock.now()),
+          true,
+          reason: 'the pointer must be born with a fresh window, never already expired',
+        );
+        expect(written.validUntil, clock.now().add(DEFAULT_DURATION));
+      });
+    });
+
+    test('does not resume from an expired pointer (page 0)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 1,
+                dayId: 1,
+                iteration: 1,
+                startedAt: clock.now().subtract(const Duration(hours: 6)),
+                currentPage: 5,
+                validUntil: clock.now().subtract(const Duration(hours: 1)), // already expired
+              ),
+            );
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        expect(initialPage, 0, reason: 'an expired pointer must not resume');
+        await Future<void>.delayed(Duration.zero);
+      });
+    });
+
+    test('does not resume from a pointer for a different routine (page 0)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 999, // different routine
+                dayId: 1,
+                iteration: 1,
+                startedAt: clock.now(),
+                currentPage: 5,
+                validUntil: clock.now().add(const Duration(hours: 2)),
+              ),
+            );
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        expect(initialPage, 0, reason: 'a mismatched-routine pointer must not resume');
+        await Future<void>.delayed(Duration.zero);
+      });
+    });
+
+    test('does not resume from a pointer for a different day (page 0)', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 1,
+                dayId: 2, // different day
+                iteration: 1,
+                startedAt: clock.now(),
+                currentPage: 5,
+                validUntil: clock.now().add(const Duration(hours: 2)),
+              ),
+            );
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        expect(initialPage, 0, reason: 'a mismatched-day pointer must not resume');
+        await Future<void>.delayed(Duration.zero);
+      });
+    });
+
+    test('clamps a resume cursor that points past the last real page', () async {
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 1,
+                dayId: 1,
+                iteration: 1,
+                startedAt: clock.now(),
+                currentPage: 9999, // absurdly large → would land on the summary
+                validUntil: clock.now().add(const Duration(hours: 2)),
+              ),
+            );
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        final initialPage = sut.initData(getTestRoutine(), 1, 1);
+
+        // Never resume onto the summary (last) page.
+        expect(initialPage, lessThan(sut.state.totalPages - 1));
+        expect(initialPage, sut.state.totalPages - 2);
+        await Future<void>.delayed(Duration.zero);
+      });
+    });
+  });
+}
+
+/// Fake session repository that yields a fixed in-memory list, bypassing the
+/// drift stream so the unit tests stay synchronous and deterministic.
+class _FakeSessionRepo extends WorkoutSessionRepository {
+  _FakeSessionRepo(super.db, this._sessions);
+
+  final List<WorkoutSession> _sessions;
+
+  @override
+  Stream<List<WorkoutSession>> watchAllDrift() => Stream.value(_sessions);
+}
+
+/// Fake session repository backed by an arbitrary (possibly non-closing) stream,
+/// used to prove `restoreCompletionFromLogs` resolves on the first emission of a
+/// live stream without hanging.
+class _StreamSessionRepo extends WorkoutSessionRepository {
+  _StreamSessionRepo(super.db, this._stream);
+
+  final Stream<List<WorkoutSession>> _stream;
+
+  @override
+  Stream<List<WorkoutSession>> watchAllDrift() => _stream;
 }

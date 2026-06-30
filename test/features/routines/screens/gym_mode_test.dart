@@ -79,9 +79,14 @@ void main() {
   final mockLogRepo = MockWorkoutLogRepository();
   final mockUserProfileRepo = MockUserProfileRepository();
 
-  setUp(() {
+  setUp(() async {
     SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
     when(mockUserProfileRepo.watchDrift()).thenAnswer((_) => Stream.value(null));
+
+    // `PreferenceHelper.asyncPref` binds its backing store once, so clear that
+    // instance to keep the persisted active-workout pointer from leaking
+    // between tests in this file.
+    await PreferenceHelper.asyncPref.clear();
     when(mockSessionRepo.watchAllDrift()).thenAnswer(
       (_) => Stream<List<WorkoutSession>>.multi((controller) {
         controller.add(testRoutine.sessions);
