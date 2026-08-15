@@ -36,6 +36,38 @@ import 'package:wger/powersync/sync_diagnostics.dart' show collectSyncDiagnostic
 /// modal dialogs on top of each other.
 bool _errorDialogVisible = false;
 
+/// Shows [dialog] on the next frame, releasing [_errorDialogVisible] when it
+/// closes (or when it could not be shown at all).
+///
+/// Error handlers run at arbitrary points, including *during* build or layout
+/// of the widget tree (FlutterError.onError). Calling showDialog there pushes
+/// a navigator route mid-build, which trips the navigator's `!_debugLocked`
+/// assertion; that secondary exception then re-enters the error handler and,
+/// because the guard flag was already set and its release was attached to a
+/// future that never materialised, every later error is silently suppressed
+/// while nothing is on screen. Deferring the push to a post-frame callback
+/// makes the dialog legal regardless of when the error fired, and the
+/// try/catch keeps the guard flag from wedging shut.
+void _showErrorDialogNextFrame(BuildContext dialogContext, Future<void> Function() dialog) {
+  _errorDialogVisible = true;
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!dialogContext.mounted) {
+      _errorDialogVisible = false;
+      return;
+    }
+    try {
+      dialog().whenComplete(() => _errorDialogVisible = false);
+    } catch (e) {
+      _errorDialogVisible = false;
+      rethrow;
+    }
+  });
+  // An error outside a frame (async work while the UI is idle) still needs a
+  // frame for the callback to run in.
+  WidgetsBinding.instance.scheduleFrame();
+}
+
 void showHttpExceptionErrorDialog(WgerHttpException exception, {BuildContext? context}) {
   final logger = Logger('showHttpExceptionErrorDialog');
 
@@ -55,34 +87,36 @@ void showHttpExceptionErrorDialog(WgerHttpException exception, {BuildContext? co
     logger.info('Suppressing error dialog, one is already visible: $exception');
     return;
   }
-  _errorDialogVisible = true;
 
-  showDialog(
-    context: dialogContext,
-    builder: (ctx) => AlertDialog(
-      title: Text(AppLocalizations.of(ctx).anErrorOccurred),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (exception.type == ErrorType.html)
-              ServerHtmlError(data: exception.htmlError)
-            else
-              ...formatApiErrors(extractErrors(exception.errors)),
-          ],
+  _showErrorDialogNextFrame(
+    dialogContext,
+    () => showDialog(
+      context: dialogContext,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppLocalizations.of(ctx).anErrorOccurred),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (exception.type == ErrorType.html)
+                ServerHtmlError(data: exception.htmlError)
+              else
+                ...formatApiErrors(extractErrors(exception.errors)),
+            ],
+          ),
         ),
+        actions: [
+          TextButton(
+            child: Text(MaterialLocalizations.of(ctx).closeButtonLabel),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+            },
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          child: Text(MaterialLocalizations.of(ctx).closeButtonLabel),
-          onPressed: () {
-            Navigator.of(ctx).pop();
-          },
-        ),
-      ],
     ),
-  ).whenComplete(() => _errorDialogVisible = false);
+  );
 }
 
 /// Flattens a [WgerHttpException]'s context and error map into a readable
@@ -112,7 +146,6 @@ void showGeneralErrorDialog(dynamic error, StackTrace? stackTrace, {BuildContext
     logger.info('Suppressing error dialog, one is already visible: $error');
     return;
   }
-  _errorDialogVisible = true;
 
   final i18n = AppLocalizations.of(dialogContext);
 
@@ -139,124 +172,127 @@ void showGeneralErrorDialog(dynamic error, StackTrace? stackTrace, {BuildContext
   final String fullStackTrace = stackTrace?.toString() ?? 'No stack trace available.';
   final applicationLogs = InMemoryLogStore().getFormattedLogs();
 
-  showDialog(
-    context: dialogContext,
-    barrierDismissible: false,
-    builder: (BuildContext context) {
-      return AlertDialog(
-        title: Row(
-          spacing: 8,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error, color: Theme.of(context).colorScheme.error),
-            Expanded(
-              child: Text(
-                i18n.anErrorOccurred,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: ListBody(
+  _showErrorDialogNextFrame(
+    dialogContext,
+    () => showDialog(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            spacing: 8,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(i18n.errorInfoDescription),
-              const SizedBox(height: 8),
-              Text(i18n.errorInfoDescription2),
-              const SizedBox(height: 10),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                title: Text(i18n.errorViewDetails),
-                children: [
-                  Text(
-                    issueErrorMessage,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Container(
-                    alignment: Alignment.topLeft,
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    constraints: const BoxConstraints(maxHeight: 250),
-                    child: SingleChildScrollView(
-                      child: Text(
-                        fullStackTrace,
-                        style: TextStyle(
-                          fontSize: 12.0,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ),
-                  CopyToClipboardButton(
-                    text:
-                        'Error Title: $issueTitle\n'
-                        'Error Message: $issueErrorMessage\n\n'
-                        'Stack Trace:\n$fullStackTrace',
-                  ),
-                  const SizedBox(height: 8),
-                  Text(i18n.applicationLogs, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Container(
-                    alignment: Alignment.topLeft,
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    constraints: const BoxConstraints(maxHeight: 250),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: [
-                          ...applicationLogs.map(
-                            (entry) => Text(
-                              entry,
-                              style: TextStyle(
-                                fontSize: 12.0,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  CopyToClipboardButton(text: applicationLogs.join('\n')),
-                ],
+              Icon(Icons.error, color: Theme.of(context).colorScheme.error),
+              Expanded(
+                child: Text(
+                  i18n.anErrorOccurred,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('Report issue'),
-            onPressed: () async {
-              final githubIssueUrl = buildGithubIssueUrl(
-                issueTitle: issueTitle,
-                issueErrorMessage: issueErrorMessage,
-                stackTrace: fullStackTrace,
-                applicationLogs: applicationLogs,
-                syncDiagnostics: await collectSyncDiagnostics(),
-              );
-              final Uri reportUri = Uri.parse(githubIssueUrl);
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: [
+                Text(i18n.errorInfoDescription),
+                const SizedBox(height: 8),
+                Text(i18n.errorInfoDescription2),
+                const SizedBox(height: 10),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(i18n.errorViewDetails),
+                  children: [
+                    Text(
+                      issueErrorMessage,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Container(
+                      alignment: Alignment.topLeft,
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      constraints: const BoxConstraints(maxHeight: 250),
+                      child: SingleChildScrollView(
+                        child: Text(
+                          fullStackTrace,
+                          style: TextStyle(
+                            fontSize: 12.0,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                    CopyToClipboardButton(
+                      text:
+                          'Error Title: $issueTitle\n'
+                          'Error Message: $issueErrorMessage\n\n'
+                          'Stack Trace:\n$fullStackTrace',
+                    ),
+                    const SizedBox(height: 8),
+                    Text(i18n.applicationLogs, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Container(
+                      alignment: Alignment.topLeft,
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      constraints: const BoxConstraints(maxHeight: 250),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            ...applicationLogs.map(
+                              (entry) => Text(
+                                entry,
+                                style: TextStyle(
+                                  fontSize: 12.0,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    CopyToClipboardButton(text: applicationLogs.join('\n')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Report issue'),
+              onPressed: () async {
+                final githubIssueUrl = buildGithubIssueUrl(
+                  issueTitle: issueTitle,
+                  issueErrorMessage: issueErrorMessage,
+                  stackTrace: fullStackTrace,
+                  applicationLogs: applicationLogs,
+                  syncDiagnostics: await collectSyncDiagnostics(),
+                );
+                final Uri reportUri = Uri.parse(githubIssueUrl);
 
-              try {
-                await launchUrl(reportUri, mode: LaunchMode.externalApplication);
-              } catch (e) {
-                if (kDebugMode) {
-                  logger.warning('Error launching URL: $e');
+                try {
+                  await launchUrl(reportUri, mode: LaunchMode.externalApplication);
+                } catch (e) {
+                  if (kDebugMode) {
+                    logger.warning('Error launching URL: $e');
+                  }
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('Error opening issue tracker: $e')));
+                  }
                 }
-                if (context.mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('Error opening issue tracker: $e')));
-                }
-              }
-            },
-          ),
-          FilledButton(
-            child: Text(MaterialLocalizations.of(context).okButtonLabel),
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-          ),
-        ],
-      );
-    },
-  ).whenComplete(() => _errorDialogVisible = false);
+              },
+            ),
+            FilledButton(
+              child: Text(MaterialLocalizations.of(context).okButtonLabel),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    ),
+  );
 }
 
 /// Routes [error] to the appropriate UI based on its [ErrorSeverity].
