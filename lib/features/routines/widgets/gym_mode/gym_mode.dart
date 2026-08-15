@@ -83,16 +83,28 @@ class _GymModeState extends ConsumerState<GymMode> {
       routine = await notifier.fetchAndSetRoutineFull(routineId);
     } else {
       // Offline: use the local routine data. Reaching the gym mode requires an
-      // already-downloaded routine, so the routine is normally present
-      final cached = ref
-          .read(routinesRiverpodProvider)
-          .value
-          ?.routines
-          .firstWhereOrNull((r) => r.id == routineId);
-      if (cached == null || !cached.isHydrated) {
-        throw StateError('Routine $routineId is not available offline');
+      // already-downloaded routine, so the routine is normally present.
+      //
+      // Await the provider's first emission instead of reading `.value`
+      // directly: a cold start can deep-link here (dashboard resume card)
+      // before the keep-alive stream notifier has emitted, in which case
+      // `.value` is still null even though the routine is on disk.
+      final routines = await ref.read(routinesRiverpodProvider.future);
+      final cached = routines.routines.firstWhereOrNull((r) => r.id == routineId);
+      if (cached != null && cached.isHydrated) {
+        routine = cached;
+      } else {
+        // No hydrated copy in memory. The offline signal can be stale right
+        // after a cold start (the first connectivity probe may not have
+        // finished), so attempt the fetch anyway before giving up. Hydration
+        // is in-memory only, meaning a deep link (resume card) always lands
+        // here on a fresh process.
+        try {
+          routine = await notifier.fetchAndSetRoutineFull(routineId);
+        } catch (e) {
+          throw StateError('Routine $routineId is not available offline');
+        }
       }
-      routine = cached;
     }
 
     // Ensure the persisted resume pointer is loaded before initData reads it,

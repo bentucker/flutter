@@ -532,6 +532,77 @@ void main() {
     },
     semanticsEnabled: false,
   );
+
+  testWidgets(
+    'stale offline signal: cold-start deep link falls back to the fetch',
+    (WidgetTester tester) async {
+      // Regression: the dashboard resume card can deep link into gym mode on a
+      // cold start, when hydration (in-memory only) is gone and the first
+      // connectivity probe has not validated yet, so the network provider may
+      // still claim offline. Gym mode must then attempt the fetch anyway
+      // instead of failing with "Routine X is not available offline".
+      final unhydrated = getTestRoutine();
+      unhydrated.isHydrated = false;
+      when(mockRoutinesRepo.watchAllDrift()).thenAnswer((_) => Stream.value([unhydrated]));
+
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode(isOnline: false));
+        await tester.pumpAndSettle();
+
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(TextButton)),
+        );
+        container.listen(routinesRiverpodProvider, (_, _) {});
+        await tester.pumpAndSettle();
+        clearInteractions(mockRoutinesRepo);
+
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(StreamErrorIndicator), findsNothing);
+        expect(find.byType(StartPage), findsOneWidget);
+        verify(mockRoutinesRepo.fetchAndSetRoutineFullServer(any)).called(1);
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'workout menu: tapping an exercise jumps to its page and dismisses the dialog',
+    (WidgetTester tester) async {
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(StartPage), findsOneWidget);
+
+        // Open the workout menu dialog (the one with End workout / Close)
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+
+        // Tap the second exercise in the navigation list
+        await tester.tap(find.text('Side raises').last);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsNothing, reason: 'tap must dismiss the dialog');
+
+        // Close button must also dismiss
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.text('Close'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsNothing, reason: 'Close must dismiss the dialog');
+      });
+    },
+    semanticsEnabled: false,
+  );
 }
 
 /// A gym state as an interrupted-but-still-valid session leaves it behind:
