@@ -54,28 +54,37 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
         ),
         IconButton(
           icon: Icon(status.icon),
-          onPressed: () => showDialog<void>(
-            context: context,
+          onPressed: () {
             // The dialog watches the sync state itself; only the server URL
             // and the offline gate are snapshots taken when it opens.
+            // Snapshot here in the tap handler, NOT inside the route builder:
+            // the builder runs during the dialog route's build, and ref.read
+            // on a dirty provider flushes it there, scheduling a provider
+            // scope refresh mid-build ("markNeedsBuild called during build").
             // No reconnect while offline: the app deliberately disconnects
-            // there (see powerSyncInstance). The tap-time check covers the
-            // network dropping while the dialog is open
-            builder: (_) => SyncStatusDialog(
-              serverUrl: ref.read(wgerBaseProvider).serverUrl,
-              onReconnect: !ref.read(networkStatusProvider)
-                  ? null
-                  : () {
-                      final db = builtPowerSyncInstance;
-                      final serverUrl = ref.read(wgerBaseProvider).serverUrl;
-                      if (db == null || serverUrl == null || !ref.read(networkStatusProvider)) {
-                        return;
-                      }
-                      ref.read(syncWatchdogProvider).reset();
-                      connectPowerSync(db, serverUrl, ref.read(authenticatedHttpClientProvider));
-                    },
-            ),
-          ),
+            // there (see powerSyncInstance). The reconnect-time check covers
+            // the network dropping while the dialog is open
+            final serverUrl = ref.read(wgerBaseProvider).serverUrl;
+            final isOnline = ref.read(networkStatusProvider);
+
+            showDialog<void>(
+              context: context,
+              builder: (_) => SyncStatusDialog(
+                serverUrl: serverUrl,
+                onReconnect: !isOnline
+                    ? null
+                    : () {
+                        final db = builtPowerSyncInstance;
+                        final url = ref.read(wgerBaseProvider).serverUrl;
+                        if (db == null || url == null || !ref.read(networkStatusProvider)) {
+                          return;
+                        }
+                        ref.read(syncWatchdogProvider).reset();
+                        connectPowerSync(db, url, ref.read(authenticatedHttpClientProvider));
+                      },
+              ),
+            );
+          },
         ),
         IconButton(
           icon: const Icon(Icons.settings),
