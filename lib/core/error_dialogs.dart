@@ -23,6 +23,7 @@ import 'package:flutter_html/flutter_html.dart';
 import 'package:json_annotation/json_annotation.dart';
 import 'package:logging/logging.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:wger/core/build_safety.dart';
 import 'package:wger/core/errors.dart';
 import 'package:wger/core/exceptions/http_exception.dart';
 import 'package:wger/core/keys.dart';
@@ -46,9 +47,10 @@ bool _errorDialogVisible = false;
 void _showErrorDialogNextFrame(BuildContext dialogContext, Future<void> Function() dialog) {
   _errorDialogVisible = true;
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
+  runAfterFrame(() {
     if (!dialogContext.mounted) {
       _errorDialogVisible = false;
+      Logger('showErrorDialog').info('Dropping deferred error dialog: context unmounted');
       return;
     }
     try {
@@ -58,9 +60,6 @@ void _showErrorDialogNextFrame(BuildContext dialogContext, Future<void> Function
       rethrow;
     }
   });
-  // An error outside a frame (async work while the UI is idle) still needs a
-  // frame for the callback to run in.
-  WidgetsBinding.instance.scheduleFrame();
 }
 
 void showHttpExceptionErrorDialog(WgerHttpException exception, {BuildContext? context}) {
@@ -326,14 +325,15 @@ void showTransientErrorSnackbar() {
   }
 
   // showSnackBar sets state on the messenger, which asserts when an error is
-  // handled during build; defer to the next frame like the dialogs above.
+  // handled during build; defer to the next frame like the dialogs above. The
+  // messenger is re-resolved inside the callback: the captured one can be
+  // disposed before the frame fires (auth teardown rebuilds the app shell).
   final message = AppLocalizations.of(context).errorCouldNotConnectToServer;
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    messenger
-      ..clearSnackBars()
+  runAfterFrame(() {
+    scaffoldMessengerKey.currentState
+      ?..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(message)));
   });
-  WidgetsBinding.instance.scheduleFrame();
 }
 
 /// Shows a brief, non-blocking snackbar telling the user their session is no
@@ -347,14 +347,13 @@ void showSessionExpiredSnackbar() {
   }
 
   // Deferred like showTransientErrorSnackbar: auth teardown can coincide
-  // with a build.
+  // with a build, and the captured messenger can be disposed by then.
   final message = AppLocalizations.of(context).sessionExpired;
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    messenger
-      ..clearSnackBars()
+  runAfterFrame(() {
+    scaffoldMessengerKey.currentState
+      ?..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(message)));
   });
-  WidgetsBinding.instance.scheduleFrame();
 }
 
 /// A widget to render HTML errors returned by the server

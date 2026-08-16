@@ -1,0 +1,40 @@
+/*
+ * This file is part of wger Workout Manager <https://github.com/wger-project>.
+ * Copyright (c) 2026 wger Team
+ *
+ * wger Workout Manager is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+import 'package:flutter/widgets.dart';
+
+/// Runs [action] on the next frame.
+///
+/// UI side effects (dialogs, snackbars, navigation) are illegal during build
+/// or layout, but error handlers and provider listeners can fire there.
+/// Also schedules a frame so an action requested while the UI is idle still
+/// runs.
+void runAfterFrame(VoidCallback action) {
+  WidgetsBinding.instance.addPostFrameCallback((_) => action());
+  WidgetsBinding.instance.scheduleFrame();
+}
+
+/// Yields past the synchronous phase of a provider create or widget
+/// life-cycle callback.
+///
+/// Reading a provider whose dependency chain is dirty flushes it on the spot;
+/// done synchronously from a create that runs during widget build, that
+/// schedules a provider refresh mid-build and crashes. Await this first so
+/// subsequent provider work happens outside the build phase. A microtask, not
+/// a timer: widget tests assert !timersPending at teardown.
+Future<void> yieldPastBuild() => Future<void>.microtask(() {});

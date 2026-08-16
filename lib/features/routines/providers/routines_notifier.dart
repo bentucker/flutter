@@ -19,6 +19,7 @@
 import 'package:collection/collection.dart';
 import 'package:logging/logging.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:wger/core/build_safety.dart';
 import 'package:wger/core/consts.dart';
 import 'package:wger/core/helpers.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
@@ -263,11 +264,9 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
   }
 
   Future<Routine> _fetchAndSetRoutineFull(int routineId) async {
-    // Microtask yield, not a timer: widget tests assert !timersPending at
-    // teardown. Watch-created providers enter here synchronously during
-    // widget build, where reading a dirty dependency chain forces a
-    // mid-build refresh (see routineHydration).
-    await Future<void>.microtask(() {});
+    // Watch-created providers enter here synchronously during widget build,
+    // where reading a dirty dependency chain forces a mid-build refresh.
+    await yieldPastBuild();
 
     final repo = ref.read(routinesRepositoryProvider);
 
@@ -435,10 +434,10 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
 /// lets a reconnect re-create the provider and retry.
 @riverpod
 Future<void> routineHydration(Ref ref, int routineId) async {
-  // Yield before touching any provider: this is created by a ref.watch during
-  // widget build, and reading a dirty dependency chain there (e.g. auth right
-  // after a token refresh) forces a provider refresh mid-build.
-  await Future<void>.microtask(() {});
+  // Created by a ref.watch during widget build; reading a dirty dependency
+  // chain there (e.g. auth right after a token refresh) forces a provider
+  // refresh mid-build.
+  await yieldPastBuild();
 
   await ref.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(routineId);
 }
