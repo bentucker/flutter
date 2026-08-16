@@ -263,10 +263,11 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
   }
 
   Future<Routine> _fetchAndSetRoutineFull(int routineId) async {
-    // Yield first: watch-created providers enter here synchronously during
+    // Microtask yield, not a timer: widget tests assert !timersPending at
+    // teardown. Watch-created providers enter here synchronously during
     // widget build, where reading a dirty dependency chain forces a
     // mid-build refresh (see routineHydration).
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.microtask(() {});
 
     final repo = ref.read(routinesRepositoryProvider);
 
@@ -437,7 +438,7 @@ Future<void> routineHydration(Ref ref, int routineId) async {
   // Yield before touching any provider: this is created by a ref.watch during
   // widget build, and reading a dirty dependency chain there (e.g. auth right
   // after a token refresh) forces a provider refresh mid-build.
-  await Future<void>.delayed(Duration.zero);
+  await Future<void>.microtask(() {});
 
   await ref.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(routineId);
 }
