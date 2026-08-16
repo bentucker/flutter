@@ -435,11 +435,9 @@ class GymStateNotifier extends _$GymStateNotifier {
     return initialPage;
   }
 
-  /// Clamps the current page below the summary page and returns it.
-  ///
-  /// Resuming directly onto the summary would clear the state that was just
-  /// restored. Called from initData and again after preference loading, since
-  /// prefs reshape the page tree and can shrink it below the restored cursor.
+  /// Clamps the current page below the summary page and returns it: resuming
+  /// onto the summary would clear the state that was just restored. Runs
+  /// again after prefs load, since they can shrink the page tree.
   int clampResumePage() {
     final maxResumablePage = (state.totalPages - 2).clamp(0, state.totalPages);
     if (state.currentPage > maxResumablePage) {

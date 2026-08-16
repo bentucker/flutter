@@ -18,23 +18,16 @@
 
 import 'package:flutter/widgets.dart';
 
-/// Runs [action] on the next frame.
-///
-/// UI side effects (dialogs, snackbars, navigation) are illegal during build
-/// or layout, but error handlers and provider listeners can fire there.
-/// Also schedules a frame so an action requested while the UI is idle still
-/// runs.
+/// Runs [action] on the next frame: UI side effects (dialogs, snackbars,
+/// navigation) are illegal during build, but error handlers and provider
+/// listeners can fire there. Schedules a frame so idle-time requests run too.
 void runAfterFrame(VoidCallback action) {
   WidgetsBinding.instance.addPostFrameCallback((_) => action());
   WidgetsBinding.instance.scheduleFrame();
 }
 
 /// Yields past the synchronous phase of a provider create or widget
-/// life-cycle callback.
-///
-/// Reading a provider whose dependency chain is dirty flushes it on the spot;
-/// done synchronously from a create that runs during widget build, that
-/// schedules a provider refresh mid-build and crashes. Await this first so
-/// subsequent provider work happens outside the build phase. A microtask, not
-/// a timer: widget tests assert !timersPending at teardown.
+/// life-cycle callback: reading a dirty provider there flushes it mid-build
+/// and crashes. A microtask, not a timer, since widget tests assert
+/// !timersPending at teardown.
 Future<void> yieldPastBuild() => Future<void>.microtask(() {});

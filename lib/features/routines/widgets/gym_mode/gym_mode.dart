@@ -113,9 +113,8 @@ class _GymModeState extends ConsumerState<GymMode> {
     );
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();
-    // Prefs can shrink the page tree below the restored cursor; an unclamped
-    // resume would land on the summary page, whose onPageChanged clears the
-    // state that was just restored.
+    // Prefs can shrink the page tree below the restored cursor; unclamped,
+    // a resume could land on the summary page and clear the restored state.
     initialPage = gymViewModel.clampResumePage();
 
     // Best effort: completion display is an enhancement, a transient DB or

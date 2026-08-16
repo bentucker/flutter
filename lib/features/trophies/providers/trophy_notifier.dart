@@ -62,12 +62,10 @@ final class TrophyStateNotifier extends _$TrophyStateNotifier {
 
   @override
   TrophyState build() {
-    // Trophies are REST-only. Kick off the initial load when the server is
-    // reachable, and (re)fetch once it becomes reachable again. Skipping the
-    // fetch while offline keeps the REST calls from hammering an unreachable
-    // server. The reachability read lives inside the microtask: this build
-    // can run during a widget build with networkStatusProvider dirty, and a
-    // synchronous read would flush it there, forcing a mid-build refresh.
+    // Trophies are REST-only. Load when reachable, refetch on reconnect, and
+    // skip while offline so an unreachable server is not hammered. The
+    // reachability read sits inside the microtask: this build can run during
+    // widget build with networkStatusProvider dirty (see build_safety.dart).
     Future.microtask(() {
       if (ref.read(networkStatusProvider)) {
         _fetchAllSafe();

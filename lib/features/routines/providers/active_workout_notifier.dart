@@ -51,9 +51,8 @@ class ActiveWorkoutNotifier extends _$ActiveWorkoutNotifier {
     }
   }
 
-  /// Mutations are fire-and-forget at the call sites, so they are serialized
-  /// here: an unserialized remove could lose against an in-flight write and
-  /// resurrect a pointer the wipe just deleted.
+  /// Call sites fire and forget; serialized so a remove cannot lose against
+  /// an in-flight write and resurrect a just-deleted pointer.
   Future<void> _lastOp = Future.value();
 
   Future<void> _enqueue(Future<void> Function() op) {

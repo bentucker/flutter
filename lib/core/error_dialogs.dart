@@ -324,10 +324,9 @@ void showTransientErrorSnackbar() {
     return;
   }
 
-  // showSnackBar sets state on the messenger, which asserts when an error is
-  // handled during build; defer to the next frame like the dialogs above. The
-  // messenger is re-resolved inside the callback: the captured one can be
-  // disposed before the frame fires (auth teardown rebuilds the app shell).
+  // showSnackBar sets state on the messenger, which asserts during build.
+  // Re-resolved in the callback: the captured messenger can be disposed
+  // before the frame fires.
   final message = AppLocalizations.of(context).errorCouldNotConnectToServer;
   runAfterFrame(() {
     scaffoldMessengerKey.currentState
@@ -347,7 +346,7 @@ void showSessionExpiredSnackbar() {
   }
 
   // Deferred like showTransientErrorSnackbar: auth teardown can coincide
-  // with a build, and the captured messenger can be disposed by then.
+  // with a build.
   final message = AppLocalizations.of(context).sessionExpired;
   runAfterFrame(() {
     scaffoldMessengerKey.currentState

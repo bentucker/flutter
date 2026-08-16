@@ -765,10 +765,9 @@ class AuthNotifier extends _$AuthNotifier {
   /// with the new token instead of replaying their pre-login error state.
   void _invalidatePostLoginProviders() {
     _logger.fine('Invalidating data providers after login');
-    // Leaf first: the data providers below read reachability while they
-    // rebuild, and a still-dirty networkStatusProvider flushed from a create
-    // that runs during widget build forces a provider refresh mid-build.
-    // The re-probe also picks up the post-login server URL immediately.
+    // Leaf first: the providers below read reachability as they rebuild, and
+    // flushing a still-dirty networkStatusProvider from a create during
+    // widget build crashes. The re-probe also picks up the new server URL.
     ref.invalidate(networkStatusProvider);
     ref.invalidate(accountProvider);
     ref.invalidate(userProfileProvider);
@@ -978,9 +977,8 @@ class AuthNotifier extends _$AuthNotifier {
   /// Throws if the wipe fails. Callers must abort before advancing the DB
   /// owner marker, otherwise the previous user's data stay on disk
   Future<void> _wipeLocalDb() async {
-    // Device-local resume pointer must not survive a wipe: a different user
-    // would inherit it. Cleared through the notifier so the in-memory state
-    // goes with the prefs key, and never blocks the DB wipe itself.
+    // The resume pointer must not survive a wipe (a different user would
+    // inherit it); the notifier clears memory and prefs together.
     try {
       await ref.read(activeWorkoutProvider.notifier).finish();
     } catch (e, s) {
