@@ -36,7 +36,7 @@ import 'package:wger/core/network/auth_state.dart';
 import 'package:wger/core/network/secure_token_storage.dart';
 import 'package:wger/core/shared_preferences.dart';
 import 'package:wger/features/routines/providers/active_workout_notifier.dart'
-    show PREFS_ACTIVE_WORKOUT;
+    show PREFS_ACTIVE_WORKOUT, activeWorkoutProvider;
 
 import '../../helpers/fake_auth_environment.dart';
 import '../../helpers/fake_connectivity.dart';
@@ -676,7 +676,11 @@ void main() {
 
     test('a wiping logout clears the active-workout resume pointer (R4)', () async {
       final prefs = PreferenceHelper.asyncPref;
-      await prefs.setString(PREFS_ACTIVE_WORKOUT, '{"routineId":1}');
+      await prefs.setString(
+        PREFS_ACTIVE_WORKOUT,
+        '{"routineId":1,"dayId":2,"iteration":3,"startedAt":"2026-04-15T10:00:00.000",'
+        '"currentPage":4,"validUntil":"2099-01-01T00:00:00.000"}',
+      );
       // Logout keeps the local DB by default; opt out to exercise the wipe.
       await prefs.setBool(PREFS_KEEP_DATA_ON_LOGOUT, false);
 
@@ -684,12 +688,22 @@ void main() {
       await container.read(authProvider.future);
       await container.read(authProvider.notifier).revalidationDone;
 
+      // Build the pointer provider so it holds the value in memory: the wipe
+      // must clear that too, or a same-process user switch shows the previous
+      // user's resume card even though the prefs key is gone.
+      expect(await container.read(activeWorkoutProvider.future), isNotNull);
+
       await container.read(authProvider.notifier).logout();
 
       expect(
         await prefs.containsKey(PREFS_ACTIVE_WORKOUT),
         false,
         reason: 'a wiping logout must drop the device-local resume pointer',
+      );
+      expect(
+        container.read(activeWorkoutProvider).value,
+        isNull,
+        reason: 'the in-memory pointer must be cleared without an app restart',
       );
     });
 

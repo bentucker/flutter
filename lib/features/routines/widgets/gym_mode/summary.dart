@@ -26,6 +26,7 @@ import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/core/widgets/progress_indicator.dart';
 import 'package:wger/features/routines/models/session.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
 import 'package:wger/features/routines/widgets/gym_mode/navigation.dart';
@@ -189,6 +190,8 @@ class WorkoutSessionStats extends ConsumerWidget {
         ExercisesCard(_session, _userPrTrophies),
         FilledButton(
           onPressed: () {
+            // Explicit end: stop offering the resume card for this workout.
+            ref.read(activeWorkoutProvider.notifier).finish();
             ref.read(gymStateProvider.notifier).clear();
             Navigator.of(context).pop();
           },

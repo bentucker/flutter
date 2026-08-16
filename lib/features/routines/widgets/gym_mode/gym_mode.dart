@@ -106,13 +106,17 @@ class _GymModeState extends ConsumerState<GymMode> {
     await ref.read(activeWorkoutProvider.future);
 
     final gymViewModel = ref.read(gymStateProvider.notifier);
-    final initialPage = gymViewModel.initData(
+    var initialPage = gymViewModel.initData(
       routine,
       widget._args.dayId,
       widget._args.iteration,
     );
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();
+    // Prefs can shrink the page tree below the restored cursor; an unclamped
+    // resume would land on the summary page, whose onPageChanged clears the
+    // state that was just restored.
+    initialPage = gymViewModel.clampResumePage();
 
     // Best effort: completion display is an enhancement, a transient DB or
     // stream error must never block entering the workout.

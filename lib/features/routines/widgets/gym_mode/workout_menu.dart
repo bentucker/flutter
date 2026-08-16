@@ -21,6 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 import 'package:wger/core/consts.dart';
 import 'package:wger/features/exercises/widgets/autocompleter.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
@@ -420,6 +421,8 @@ class WorkoutMenuDialog extends ConsumerWidget {
         ? TextButton(
             child: Text(AppLocalizations.of(context).endWorkout),
             onPressed: () {
+              // Explicit end: stop offering the resume card for this workout.
+              ref.read(activeWorkoutProvider.notifier).finish();
               controller.animateToPage(
                 gymState.totalPages,
                 duration: DEFAULT_ANIMATION_DURATION,

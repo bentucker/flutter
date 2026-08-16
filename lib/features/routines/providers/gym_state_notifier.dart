@@ -397,8 +397,9 @@ class GymStateNotifier extends _$GymStateNotifier {
       iteration: iteration,
       currentPage: initialPage,
       validUntil: validUntil,
-      // A fresh workout also restarts the elapsed timer
-      workoutStart: shouldReset ? clock.now() : null,
+      // A fresh workout restarts the elapsed timer; a resumed one keeps its
+      // original start so elapsed time and the session start stay truthful.
+      workoutStart: shouldReset ? (pointerMatches ? pointer.startedAt : clock.now()) : null,
     );
 
     // Calculate the pages.
@@ -406,14 +407,7 @@ class GymStateNotifier extends _$GymStateNotifier {
     // existing state like the exercises that have already been done
     if (shouldReset) {
       calculatePages();
-
-      // Never resume directly onto the summary (last) page: clamp to the last
-      // "real" page (the session page at totalPages - 2 at most).
-      final maxResumablePage = (state.totalPages - 2).clamp(0, state.totalPages);
-      if (initialPage > maxResumablePage) {
-        initialPage = maxResumablePage;
-        state = state.copyWith(currentPage: initialPage);
-      }
+      initialPage = clampResumePage();
     }
 
     // Persist (or refresh) the active-workout pointer so the workout can be
@@ -430,7 +424,6 @@ class GymStateNotifier extends _$GymStateNotifier {
                 dayId: dayId,
                 iteration: iteration,
                 startedAt: now,
-                startTime: state.startTime,
                 currentPage: initialPage,
                 validUntil: validUntil,
               ),
@@ -440,6 +433,19 @@ class GymStateNotifier extends _$GymStateNotifier {
 
     _logger.fine('Initialized GymModeState, initialPage=$initialPage');
     return initialPage;
+  }
+
+  /// Clamps the current page below the summary page and returns it.
+  ///
+  /// Resuming directly onto the summary would clear the state that was just
+  /// restored. Called from initData and again after preference loading, since
+  /// prefs reshape the page tree and can shrink it below the restored cursor.
+  int clampResumePage() {
+    final maxResumablePage = (state.totalPages - 2).clamp(0, state.totalPages);
+    if (state.currentPage > maxResumablePage) {
+      state = state.copyWith(currentPage: maxResumablePage);
+    }
+    return state.currentPage;
   }
 
   void setCurrentPage(int page) {

@@ -1016,6 +1016,34 @@ void main() {
       });
     });
 
+    test('a resumed workout keeps its original start instant', () async {
+      // Regression: workoutStart was unconditionally reset to now, so a
+      // resumed workout's elapsed timer and derived session start time
+      // restarted at the resume moment.
+      final originalStart = DateTime(2026, 4, 15, 10, 30);
+      await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
+        await container
+            .read(activeWorkoutProvider.notifier)
+            .start(
+              ActiveWorkout(
+                routineId: 1,
+                dayId: 1,
+                iteration: 1,
+                startedAt: originalStart,
+                currentPage: 5,
+                validUntil: clock.now().add(const Duration(hours: 2)),
+              ),
+            );
+        await container.read(activeWorkoutProvider.future);
+
+        final sut = container.read(gymStateProvider.notifier);
+        sut.initData(getTestRoutine(), 1, 1);
+
+        expect(sut.state.workoutStart, originalStart);
+        expect(sut.state.startTime, TimeOfDay.fromDateTime(originalStart));
+      });
+    });
+
     test('starts at page 0 when no pointer matches', () async {
       await withClock(Clock.fixed(DateTime(2026, 4, 15, 12)), () async {
         // No pointer persisted.

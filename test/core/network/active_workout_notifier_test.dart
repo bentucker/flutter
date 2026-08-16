@@ -16,7 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
@@ -35,7 +34,6 @@ void main() {
     dayId: 2,
     iteration: 3,
     startedAt: DateTime.utc(2026, 4, 15, 10),
-    startTime: const TimeOfDay(hour: 10, minute: 30),
     currentPage: currentPage,
     validUntil: DateTime.utc(2026, 4, 15, 15),
   );
@@ -99,6 +97,27 @@ void main() {
     await notifier.finish();
     expect(container.read(activeWorkoutProvider).value, isNull);
 
+    final restarted = ProviderContainer();
+    addTearDown(restarted.dispose);
+    expect(await restarted.read(activeWorkoutProvider.future), isNull);
+  });
+
+  test('finish cannot lose against an in-flight write', () async {
+    // Call sites fire-and-forget; without serialization a remove can complete
+    // while an earlier write is still in flight, resurrecting the pointer.
+    final notifier = container.read(activeWorkoutProvider.notifier);
+
+    final ops = [
+      notifier.start(makeWorkout(currentPage: 1)),
+      notifier.updateCursor(2),
+      notifier.finish(),
+    ];
+    await Future.wait(ops);
+
+    expect(container.read(activeWorkoutProvider).value, isNull);
+    expect(await PreferenceHelper.asyncPref.containsKey(PREFS_ACTIVE_WORKOUT), false);
+
+    // And a restart sees the same outcome.
     final restarted = ProviderContainer();
     addTearDown(restarted.dispose);
     expect(await restarted.read(activeWorkoutProvider.future), isNull);

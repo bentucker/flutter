@@ -34,6 +34,7 @@ import 'package:wger/features/exercises/providers/exercises_notifier.dart';
 import 'package:wger/features/routines/models/repetition_unit.dart';
 import 'package:wger/features/routines/models/session.dart';
 import 'package:wger/features/routines/models/weight_unit.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
@@ -561,6 +562,75 @@ void main() {
         expect(find.byType(StreamErrorIndicator), findsNothing);
         expect(find.byType(StartPage), findsOneWidget);
         verify(mockRoutinesRepo.fetchAndSetRoutineFullServer(any)).called(1);
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'resume cursor is clamped against the prefs-shaped page tree',
+    (WidgetTester tester) async {
+      // Regression: the clamp ran against the default (maximal) page tree
+      // before prefs shrank it, so a resume could land on the summary page,
+      // whose onPageChanged clears the freshly restored state.
+      await PreferenceHelper.asyncPref.setBool(PREFS_SHOW_EXERCISES, false);
+      await PreferenceHelper.asyncPref.setBool(PREFS_SHOW_TIMER, false);
+
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await PreferenceHelper.asyncPref.setString(
+          PREFS_ACTIVE_WORKOUT,
+          '{"routineId":1,"dayId":1,"iteration":1,'
+          '"startedAt":"2025-03-29T13:00:00.000",'
+          '"currentPage":999,'
+          '"validUntil":"2025-03-29T18:00:00.000"}',
+        );
+
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(GymModeScreen)),
+        );
+        final state = container.read(gymStateProvider);
+        expect(state.isInitialized, true, reason: 'restored state must not be cleared on entry');
+        expect(
+          state.currentPage,
+          lessThan(state.totalPages - 1),
+          reason: 'resume must never land on the summary page',
+        );
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'End workout in the menu clears the resume pointer',
+    (WidgetTester tester) async {
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(GymModeScreen)),
+        );
+        // Entering gym mode wrote a pointer.
+        expect(container.read(activeWorkoutProvider).value, isNotNull);
+
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('End workout'));
+        await tester.pumpAndSettle();
+
+        expect(
+          container.read(activeWorkoutProvider).value,
+          isNull,
+          reason: 'an explicit End workout must stop offering the resume card',
+        );
       });
     },
     semanticsEnabled: false,

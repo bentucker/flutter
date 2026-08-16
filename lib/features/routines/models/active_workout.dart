@@ -31,12 +31,9 @@ class ActiveWorkout {
   final int dayId;
   final int iteration;
 
-  /// Calendar anchor for "today's session" (mirrors the session `date` basis).
+  /// Workout start instant; restored into `GymModeState.workoutStart` on
+  /// resume so elapsed time and the derived session start stay truthful.
   final DateTime startedAt;
-
-  /// Optional wall-clock start, kept for display parity with
-  /// `GymModeState.startTime`.
-  final TimeOfDay? startTime;
 
   /// Cursor (page index) to restore on resume.
   final int currentPage;
@@ -52,7 +49,6 @@ class ActiveWorkout {
     required this.startedAt,
     required this.currentPage,
     required this.validUntil,
-    this.startTime,
   });
 
   ActiveWorkout copyWith({
@@ -60,7 +56,6 @@ class ActiveWorkout {
     int? dayId,
     int? iteration,
     DateTime? startedAt,
-    TimeOfDay? startTime,
     int? currentPage,
     DateTime? validUntil,
   }) {
@@ -69,7 +64,6 @@ class ActiveWorkout {
       dayId: dayId ?? this.dayId,
       iteration: iteration ?? this.iteration,
       startedAt: startedAt ?? this.startedAt,
-      startTime: startTime ?? this.startTime,
       currentPage: currentPage ?? this.currentPage,
       validUntil: validUntil ?? this.validUntil,
     );
@@ -80,23 +74,16 @@ class ActiveWorkout {
     'dayId': dayId,
     'iteration': iteration,
     'startedAt': startedAt.toIso8601String(),
-    'startTimeHour': startTime?.hour,
-    'startTimeMinute': startTime?.minute,
     'currentPage': currentPage,
     'validUntil': validUntil.toIso8601String(),
   };
 
   factory ActiveWorkout.fromJson(Map<String, dynamic> json) {
-    final startHour = json['startTimeHour'] as int?;
-    final startMinute = json['startTimeMinute'] as int?;
     return ActiveWorkout(
       routineId: json['routineId'] as int,
       dayId: json['dayId'] as int,
       iteration: json['iteration'] as int,
       startedAt: DateTime.parse(json['startedAt'] as String),
-      startTime: (startHour != null && startMinute != null)
-          ? TimeOfDay(hour: startHour, minute: startMinute)
-          : null,
       currentPage: json['currentPage'] as int,
       validUntil: DateTime.parse(json['validUntil'] as String),
     );
@@ -109,13 +96,11 @@ class ActiveWorkout {
       dayId == other.dayId &&
       iteration == other.iteration &&
       startedAt == other.startedAt &&
-      startTime == other.startTime &&
       currentPage == other.currentPage &&
       validUntil == other.validUntil;
 
   @override
-  int get hashCode =>
-      Object.hash(routineId, dayId, iteration, startedAt, startTime, currentPage, validUntil);
+  int get hashCode => Object.hash(routineId, dayId, iteration, startedAt, currentPage, validUntil);
 
   @override
   String toString() =>

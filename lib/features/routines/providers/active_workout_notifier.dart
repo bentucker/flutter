@@ -51,6 +51,17 @@ class ActiveWorkoutNotifier extends _$ActiveWorkoutNotifier {
     }
   }
 
+  /// Mutations are fire-and-forget at the call sites, so they are serialized
+  /// here: an unserialized remove could lose against an in-flight write and
+  /// resurrect a pointer the wipe just deleted.
+  Future<void> _lastOp = Future.value();
+
+  Future<void> _enqueue(Future<void> Function() op) {
+    final run = _lastOp.then((_) => op());
+    _lastOp = run.catchError((_) {});
+    return run;
+  }
+
   Future<void> _persist(ActiveWorkout workout) async {
     await PreferenceHelper.asyncPref.setString(
       PREFS_ACTIVE_WORKOUT,
@@ -60,27 +71,29 @@ class ActiveWorkoutNotifier extends _$ActiveWorkoutNotifier {
   }
 
   /// Persist a freshly-started workout pointer (overwrites any existing one).
-  Future<void> start(ActiveWorkout workout) async {
+  Future<void> start(ActiveWorkout workout) {
     _logger.fine('Starting active workout pointer: $workout');
-    await _persist(workout);
+    return _enqueue(() => _persist(workout));
   }
 
   /// Update the persisted cursor. No-op if no pointer exists.
-  Future<void> updateCursor(int page) async {
-    final current = state.value;
-    if (current == null) {
-      return;
-    }
-    if (current.currentPage == page) {
-      return;
-    }
-    await _persist(current.copyWith(currentPage: page));
+  Future<void> updateCursor(int page) {
+    return _enqueue(() async {
+      final current = state.value;
+      if (current == null || current.currentPage == page) {
+        return;
+      }
+      await _persist(current.copyWith(currentPage: page));
+    });
   }
 
-  /// Delete the pointer (called on explicit session save / finish).
-  Future<void> finish() async {
+  /// Delete the pointer (explicit session save / end, and the local-data
+  /// wipe on logout or user switch).
+  Future<void> finish() {
     _logger.fine('Clearing active workout pointer');
-    await PreferenceHelper.asyncPref.remove(PREFS_ACTIVE_WORKOUT);
-    state = const AsyncData(null);
+    return _enqueue(() async {
+      await PreferenceHelper.asyncPref.remove(PREFS_ACTIVE_WORKOUT);
+      state = const AsyncData(null);
+    });
   }
 }
