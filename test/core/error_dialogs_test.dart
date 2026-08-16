@@ -21,6 +21,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wger/core/error_dialogs.dart';
 import 'package:wger/core/errors.dart';
+import 'package:wger/core/keys.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
 /// Requests an error dialog from *inside* its own build, the situation a
@@ -31,6 +32,18 @@ class _ErrorDuringBuild extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     showGeneralErrorDialog('boom during build', StackTrace.current, context: context);
+    return const SizedBox.shrink();
+  }
+}
+
+/// Requests the transient-error snackbar from inside a build, where the
+/// messenger's setState would otherwise assert.
+class _SnackbarDuringBuild extends StatelessWidget {
+  const _SnackbarDuringBuild();
+
+  @override
+  Widget build(BuildContext context) {
+    showTransientErrorSnackbar();
     return const SizedBox.shrink();
   }
 }
@@ -124,6 +137,30 @@ void main() {
         findsOneWidget,
         reason: 'the guard flag must not stay wedged after the first dialog',
       );
+    });
+
+    testWidgets('snackbar requested during build appears without asserting', (tester) async {
+      // Same bug class as the dialogs: showSnackBar drives a setState on the
+      // messenger, which asserts when the error handler runs during build
+      // ("setState() or markNeedsBuild() called during build").
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          scaffoldMessengerKey: scaffoldMessengerKey,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: _SnackbarDuringBuild()),
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+
+      await tester.pump();
+      expect(find.byType(SnackBar), findsOneWidget);
     });
   });
 }

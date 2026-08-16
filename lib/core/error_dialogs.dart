@@ -330,11 +330,16 @@ void showTransientErrorSnackbar() {
     return;
   }
 
-  messenger
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(content: Text(AppLocalizations.of(context).errorCouldNotConnectToServer)),
-    );
+  // showSnackBar drives a setState on the messenger; error handlers can run
+  // during build, where that trips "setState() or markNeedsBuild() called
+  // during build". Defer to the next frame, like the dialogs above.
+  final message = AppLocalizations.of(context).errorCouldNotConnectToServer;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  });
+  WidgetsBinding.instance.scheduleFrame();
 }
 
 /// Shows a brief, non-blocking snackbar telling the user their session is no
@@ -347,11 +352,15 @@ void showSessionExpiredSnackbar() {
     return;
   }
 
-  messenger
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(content: Text(AppLocalizations.of(context).sessionExpired)),
-    );
+  // Deferred for the same reason as showTransientErrorSnackbar: this runs
+  // from auth teardown paths that can coincide with a build.
+  final message = AppLocalizations.of(context).sessionExpired;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  });
+  WidgetsBinding.instance.scheduleFrame();
 }
 
 /// A widget to render HTML errors returned by the server
