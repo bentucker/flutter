@@ -82,23 +82,17 @@ class _GymModeState extends ConsumerState<GymMode> {
     if (ref.read(networkStatusProvider)) {
       routine = await notifier.fetchAndSetRoutineFull(routineId);
     } else {
-      // Offline: use the local routine data. Reaching the gym mode requires an
-      // already-downloaded routine, so the routine is normally present.
-      //
-      // Await the provider's first emission instead of reading `.value`
-      // directly: a cold start can deep-link here (dashboard resume card)
-      // before the keep-alive stream notifier has emitted, in which case
-      // `.value` is still null even though the routine is on disk.
+      // Offline: use the local routine data. Awaited rather than read as
+      // `.value`: a cold-start deep link (dashboard resume card) can arrive
+      // before the keep-alive notifier's first emission.
       final routines = await ref.read(routinesRiverpodProvider.future);
       final cached = routines.routines.firstWhereOrNull((r) => r.id == routineId);
       if (cached != null && cached.isHydrated) {
         routine = cached;
       } else {
-        // No hydrated copy in memory. The offline signal can be stale right
-        // after a cold start (the first connectivity probe may not have
-        // finished), so attempt the fetch anyway before giving up. Hydration
-        // is in-memory only, meaning a deep link (resume card) always lands
-        // here on a fresh process.
+        // Hydration is in-memory only and the offline signal can be stale on
+        // a cold start (first probe still pending), so attempt the fetch
+        // before giving up.
         try {
           routine = await notifier.fetchAndSetRoutineFull(routineId);
         } catch (e) {
@@ -120,10 +114,8 @@ class _GymModeState extends ConsumerState<GymMode> {
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();
 
-    // Reconstruct per-slot completion from the already-persisted logs so the
-    // progress overlay survives app restart and in-app re-entry. This is a
-    // best-effort enhancement: a transient DB/stream error here must never block
-    // entering the workout, so failures are logged and swallowed.
+    // Best effort: completion display is an enhancement, a transient DB or
+    // stream error must never block entering the workout.
     try {
       await gymViewModel.restoreCompletionFromLogs();
     } catch (e, s) {

@@ -39,15 +39,10 @@ bool _errorDialogVisible = false;
 /// Shows [dialog] on the next frame, releasing [_errorDialogVisible] when it
 /// closes (or when it could not be shown at all).
 ///
-/// Error handlers run at arbitrary points, including *during* build or layout
-/// of the widget tree (FlutterError.onError). Calling showDialog there pushes
-/// a navigator route mid-build, which trips the navigator's `!_debugLocked`
-/// assertion; that secondary exception then re-enters the error handler and,
-/// because the guard flag was already set and its release was attached to a
-/// future that never materialised, every later error is silently suppressed
-/// while nothing is on screen. Deferring the push to a post-frame callback
-/// makes the dialog legal regardless of when the error fired, and the
-/// try/catch keeps the guard flag from wedging shut.
+/// Error handlers can run during build, where pushing a route trips the
+/// navigator's !_debugLocked assertion; the secondary exception then wedged
+/// the guard flag shut, silently suppressing every later dialog. Deferring
+/// to a post-frame callback is legal no matter when the error fired.
 void _showErrorDialogNextFrame(BuildContext dialogContext, Future<void> Function() dialog) {
   _errorDialogVisible = true;
 
@@ -330,9 +325,8 @@ void showTransientErrorSnackbar() {
     return;
   }
 
-  // showSnackBar drives a setState on the messenger; error handlers can run
-  // during build, where that trips "setState() or markNeedsBuild() called
-  // during build". Defer to the next frame, like the dialogs above.
+  // showSnackBar sets state on the messenger, which asserts when an error is
+  // handled during build; defer to the next frame like the dialogs above.
   final message = AppLocalizations.of(context).errorCouldNotConnectToServer;
   WidgetsBinding.instance.addPostFrameCallback((_) {
     messenger
@@ -352,8 +346,8 @@ void showSessionExpiredSnackbar() {
     return;
   }
 
-  // Deferred for the same reason as showTransientErrorSnackbar: this runs
-  // from auth teardown paths that can coincide with a build.
+  // Deferred like showTransientErrorSnackbar: auth teardown can coincide
+  // with a build.
   final message = AppLocalizations.of(context).sessionExpired;
   WidgetsBinding.instance.addPostFrameCallback((_) {
     messenger

@@ -55,15 +55,12 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
         IconButton(
           icon: Icon(status.icon),
           onPressed: () {
-            // The dialog watches the sync state itself; only the server URL
-            // and the offline gate are snapshots taken when it opens.
-            // Snapshot here in the tap handler, NOT inside the route builder:
-            // the builder runs during the dialog route's build, and ref.read
-            // on a dirty provider flushes it there, scheduling a provider
-            // scope refresh mid-build ("markNeedsBuild called during build").
-            // No reconnect while offline: the app deliberately disconnects
-            // there (see powerSyncInstance). The reconnect-time check covers
-            // the network dropping while the dialog is open
+            // The dialog watches the sync state itself; the server URL and
+            // offline gate are snapshots. Taken here rather than in the route
+            // builder, which runs during build where reading a dirty provider
+            // forces a mid-build refresh. No reconnect while offline: the app
+            // deliberately disconnects there (see powerSyncInstance); the
+            // reconnect-time check covers the network dropping while open.
             final serverUrl = ref.read(wgerBaseProvider).serverUrl;
             final isOnline = ref.read(networkStatusProvider);
 

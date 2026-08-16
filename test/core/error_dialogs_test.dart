@@ -107,11 +107,8 @@ void main() {
     );
 
     testWidgets('defers the dialog to the next frame instead of asserting', (tester) async {
-      // Regression test for a production freeze: requesting the dialog while
-      // the tree is building pushed a route mid-build, tripping the
-      // navigator's !_debugLocked assertion. The secondary exception then
-      // wedged the one-dialog guard shut, silently suppressing every later
-      // error dialog until app restart.
+      // Regression: a mid-build route push asserted, and the secondary
+      // exception wedged the one-dialog guard shut until app restart.
       await tester.pumpWidget(app(const _ErrorDuringBuild()));
 
       // The build itself must not throw...
@@ -140,9 +137,8 @@ void main() {
     });
 
     testWidgets('snackbar requested during build appears without asserting', (tester) async {
-      // Same bug class as the dialogs: showSnackBar drives a setState on the
-      // messenger, which asserts when the error handler runs during build
-      // ("setState() or markNeedsBuild() called during build").
+      // Same bug class as the dialogs: showSnackBar sets state on the
+      // messenger, which asserts during build.
       await tester.pumpWidget(
         MaterialApp(
           navigatorKey: navigatorKey,

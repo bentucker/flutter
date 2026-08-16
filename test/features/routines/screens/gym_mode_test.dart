@@ -536,11 +536,9 @@ void main() {
   testWidgets(
     'stale offline signal: cold-start deep link falls back to the fetch',
     (WidgetTester tester) async {
-      // Regression: the dashboard resume card can deep link into gym mode on a
-      // cold start, when hydration (in-memory only) is gone and the first
-      // connectivity probe has not validated yet, so the network provider may
-      // still claim offline. Gym mode must then attempt the fetch anyway
-      // instead of failing with "Routine X is not available offline".
+      // Regression: on a cold-start deep link (resume card) hydration is gone
+      // and the offline signal may be stale, so gym mode must attempt the
+      // fetch instead of failing with "not available offline".
       final unhydrated = getTestRoutine();
       unhydrated.isHydrated = false;
       when(mockRoutinesRepo.watchAllDrift()).thenAnswer((_) => Stream.value([unhydrated]));

@@ -23,23 +23,17 @@ import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/network/wger_base.dart';
 import 'package:wger/core/widgets/app_bar.dart';
 import 'package:wger/core/widgets/sync_status_dialog.dart';
-import 'package:wger/database/powersync/powersync.dart'
-    show pendingUploadCountProvider, syncStatus;
+import 'package:wger/database/powersync/powersync.dart' show pendingUploadCountProvider, syncStatus;
 import 'package:wger/l10n/generated/app_localizations.dart';
 
 import '../../helpers/sync_status.dart';
 
 void main() {
   testWidgets('sync icon snapshots its providers at tap time and opens the dialog', (tester) async {
-    // Companion to a production crash: the dialog builder used to
-    // ref.read(wgerBaseProvider) while the dialog route was *building*. With
-    // the provider dirty and watched (auth changed just before the tap), the
-    // read flushed it mid-build and Riverpod scheduled a scope refresh,
-    // crashing with "setState() or markNeedsBuild() called during build".
-    // The snapshots now happen in the tap handler. The exact race needs a
+    // Companion to a production crash: reading a dirty provider from the
+    // route builder forced a mid-build refresh. The exact race needs a
     // dependency flip in the same frame and is not deterministically
-    // reproducible here; this test pins the tap-time wiring of the fixed
-    // path.
+    // reproducible here; this pins the tap-time wiring of the fixed path.
     final container = ProviderContainer.test(
       overrides: [
         networkStatusProvider.overrideWithValue(true),

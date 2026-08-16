@@ -568,13 +568,9 @@ void main() {
 
   group('routineHydration family', () {
     test('creation defers all provider reads past the synchronous phase', () async {
-      // Regression: routineHydrationProvider is created by a ref.watch during
-      // the dashboard's widget build. Its create ran _fetchAndSetRoutineFull
-      // synchronously, whose ref.read(routinesRepositoryProvider) flushed the
-      // then-dirty wgerBase/auth chain mid-build and crashed with "setState()
-      // or markNeedsBuild() called during build" (seen in production right
-      // after a token refresh). The fetch must therefore not touch any
-      // provider until after a yield to the event loop.
+      // Regression: the provider is created by a ref.watch during widget
+      // build, and a synchronous read of the then-dirty repository chain
+      // crashed mid-build. No provider may be touched before a yield.
       var repoRead = false;
       when(
         mockRepo.fetchAndSetRoutineFullServer(101),
