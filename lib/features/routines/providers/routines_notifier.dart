@@ -263,6 +263,15 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
   }
 
   Future<Routine> _fetchAndSetRoutineFull(int routineId) async {
+    // Yield to the event loop before touching any provider: this method is
+    // entered synchronously when routineHydrationProvider is created by a
+    // ref.watch during widget build (dashboard), and reading a provider
+    // whose dependency chain is dirty (wgerBase -> auth, e.g. right after a
+    // token refresh) flushes it there, scheduling a provider-scope refresh
+    // mid-build ("setState() or markNeedsBuild() called during build").
+    // Same idiom as GymMode._loadGymState.
+    await Future<void>.delayed(Duration.zero);
+
     final repo = ref.read(routinesRepositoryProvider);
 
     // Wait for every reference-data stream to produce its first value before
@@ -429,5 +438,12 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
 /// lets a reconnect re-create the provider and retry.
 @riverpod
 Future<void> routineHydration(Ref ref, int routineId) async {
+  // Yield to the event loop before touching any provider: this provider is
+  // created by a ref.watch during widget build (dashboard), and reading a
+  // provider whose dependency chain is dirty (wgerBase -> auth, e.g. right
+  // after a token refresh) flushes it there, scheduling a provider-scope
+  // refresh mid-build ("setState() or markNeedsBuild() called during build").
+  await Future<void>.delayed(Duration.zero);
+
   await ref.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(routineId);
 }
