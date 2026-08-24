@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wger/database/powersync/database.dart';
 import 'package:wger/features/routines/models/log.dart';
@@ -202,6 +203,58 @@ void main() {
       await repo.addLocalDrift(makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18)));
 
       expect(await readSessions(), hasLength(2));
+    });
+
+    test('stamps an existing day-less session with the routine day', () async {
+      // Companion insert: a server-imported session carries a day but no time,
+      // which the model can no longer express directly.
+      await db
+          .into(db.workoutSessionTable)
+          .insert(
+            WorkoutSessionTableCompanion(
+              id: const Value('day-less-session'),
+              routineId: const Value(100),
+              impression: const Value(WorkoutImpression.neutral),
+              date: Value(DateTime.utc(2026, 4, 15)),
+            ),
+          );
+
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+      await repo.addLocalDrift(log, dayId: 9);
+
+      final sessions = await readSessions();
+      expect(sessions, hasLength(1));
+      expect(log.sessionId, 'day-less-session');
+      expect(sessions.single.dayId, 9, reason: 'Existing day-less session gets its dayId set');
+    });
+
+    test('does not overwrite the day of a session that already has one', () async {
+      await db
+          .into(db.workoutSessionTable)
+          .insert(
+            WorkoutSessionTableCompanion(
+              id: const Value('session-with-day'),
+              routineId: const Value(100),
+              impression: const Value(WorkoutImpression.neutral),
+              dayId: const Value(3),
+              date: Value(DateTime.utc(2026, 4, 15)),
+            ),
+          );
+
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+      await repo.addLocalDrift(log, dayId: 9);
+
+      final sessions = await readSessions();
+      expect(sessions.single.dayId, 3, reason: 'An already-stamped session is left untouched');
+    });
+
+    test('leaves the session day null when the log carries no day', () async {
+      final log = makeLog(routineId: 100, date: DateTime.utc(2026, 4, 15, 18));
+
+      await repo.addLocalDrift(log);
+
+      final sessions = await readSessions();
+      expect(sessions.single.dayId, isNull);
     });
 
     test('does not reuse a session from a different day', () async {

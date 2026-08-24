@@ -44,6 +44,8 @@ import 'package:wger/features/account/providers/account_notifier.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/gallery/providers/gallery_notifier.dart';
 import 'package:wger/features/nutrition/providers/nutrition_notifier.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart'
+    show activeWorkoutProvider;
 import 'package:wger/features/routines/providers/routines_notifier.dart';
 import 'package:wger/features/trophies/providers/trophy_notifier.dart';
 
@@ -737,6 +739,13 @@ class AuthNotifier extends _$AuthNotifier {
     var wiped = true;
     if (wipeLocalData) {
       try {
+        // The resume pointer must not survive a wipe (a different user would
+        // inherit it); cleared via the notifier so memory and prefs go together.
+        try {
+          await ref.read(activeWorkoutProvider.notifier).finish();
+        } catch (e, s) {
+          _logger.warning('Could not clear active-workout pointer on wipe', e, s);
+        }
         await _powerSync.wipe();
       } catch (e, s) {
         _logger.severe('logout wipe failed, keeping owner marker', e, s);
@@ -772,6 +781,13 @@ class AuthNotifier extends _$AuthNotifier {
   /// Wipes the local PowerSync data when a different user logs in.
   Future<void> _wipeOnUserSwitch() async {
     userSwitchWipeCount++;
+    // The resume pointer must not survive a wipe (a different user would
+    // inherit it); cleared via the notifier so memory and prefs go together.
+    try {
+      await ref.read(activeWorkoutProvider.notifier).finish();
+    } catch (e, s) {
+      _logger.warning('Could not clear active-workout pointer on wipe', e, s);
+    }
     await _powerSync.wipe();
   }
 

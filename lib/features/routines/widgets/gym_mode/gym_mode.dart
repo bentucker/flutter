@@ -27,6 +27,7 @@ import 'package:wger/core/errors.dart';
 import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/core/widgets/progress_indicator.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
@@ -69,10 +70,9 @@ class _GymModeState extends ConsumerState<GymMode> {
 
   Future<int> _loadGymState() async {
     widget._logger.fine('Loading gym state');
-    // This runs from initState. Yield once so the body never executes
-    // synchronously inside the widget life-cycle: the offline branch reaches
-    // gym-state mutations with no await in between, and modifying a provider
-    // during a life-cycle is not allowed.
+    // Runs from initState: the offline branch reaches gym-state mutations
+    // with no await in between, and modifying a provider during a
+    // life-cycle is not allowed.
     await yieldPastBuild();
 
     final notifier = ref.read(routinesRiverpodProvider.notifier);
@@ -81,31 +81,51 @@ class _GymModeState extends ConsumerState<GymMode> {
     final routine = await serverWithLocalFallback(
       isOnline: ref.read(networkStatusProvider),
       server: () => notifier.fetchAndSetRoutineFull(routineId),
-      local: () {
-        // Reaching the gym mode requires an already-downloaded routine, so
-        // the local data is normally present.
-        final cached = ref
-            .read(routinesRiverpodProvider)
-            .value
-            ?.routines
-            .firstWhereOrNull((r) => r.id == routineId);
-        if (cached == null || !cached.isHydrated) {
+      local: () async {
+        // Awaited rather than read as `.value`: a cold-start deep link
+        // (dashboard resume card) can arrive before the keep-alive notifier's
+        // first emission.
+        final routines = await ref.read(routinesRiverpodProvider.future);
+        final cached = routines.routines.firstWhereOrNull((r) => r.id == routineId);
+        if (cached != null && cached.isHydrated) {
+          return cached;
+        }
+        // Hydration is in-memory only and the offline signal can be stale on
+        // a cold start (first probe still pending), so attempt the fetch
+        // before giving up.
+        try {
+          return await notifier.fetchAndSetRoutineFull(routineId);
+        } catch (e) {
           throw StateError('Routine $routineId is not available offline');
         }
-        return cached;
       },
       logger: widget._logger,
       fallbackLog: 'Server unreachable, starting from the local routine',
     );
 
+    // Ensure the persisted resume pointer is loaded before initData reads it,
+    // so a cold-start resume lands on the saved cursor rather than page 0.
+    await ref.read(activeWorkoutProvider.future);
+
     final gymViewModel = ref.read(gymStateProvider.notifier);
-    final initialPage = gymViewModel.initData(
+    var initialPage = gymViewModel.initData(
       routine,
       widget._args.dayId,
       widget._args.iteration,
     );
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();
+    // Prefs can shrink the page tree below the restored cursor; unclamped,
+    // a resume could land on the summary page and clear the restored state.
+    initialPage = gymViewModel.clampResumePage();
+
+    // Best effort: completion display is an enhancement, a transient DB or
+    // stream error must never block entering the workout.
+    try {
+      await gymViewModel.restoreCompletionFromLogs();
+    } catch (e, s) {
+      widget._logger.warning('Could not restore completion from logs, continuing', e, s);
+    }
 
     return initialPage;
   }
