@@ -149,7 +149,7 @@ class WorkoutLogRepository {
               ..limit(1))
             .getSingleOrNull();
     if (covering != null) {
-      return covering.id;
+      return _reuseStampingDay(covering, dayId);
     }
 
     final windowStart = dateToUtcIso8601(log.date.subtract(sessionMaxDuration));
@@ -166,7 +166,7 @@ class WorkoutLogRepository {
               ..limit(1))
             .getSingleOrNull();
     if (open != null) {
-      return open.id;
+      return _reuseStampingDay(open, dayId);
     }
 
     // Sessions that came from the server without a time can only be matched by
@@ -183,7 +183,7 @@ class WorkoutLogRepository {
               ..limit(1))
             .getSingleOrNull();
     if (sameDay != null) {
-      return sameDay.id;
+      return _reuseStampingDay(sameDay, dayId);
     }
 
     // The start has to be set, otherwise the lookups above can never find this
@@ -201,5 +201,18 @@ class WorkoutLogRepository {
     _logger.finer('Created lazy session ${created.id} for log');
 
     return created.id;
+  }
+
+  /// Reuses [session], stamping it with [dayId] when it has none: a day-less
+  /// session is invisible to days that need logs to advance, stalling the
+  /// routine's date sequence on the backend (issue wger#2460).
+  Future<String?> _reuseStampingDay(WorkoutSession session, int? dayId) async {
+    if (session.dayId == null && dayId != null) {
+      await (_db.update(_db.workoutSessionTable)..where((t) => t.id.equals(session.id!))).write(
+        WorkoutSessionTableCompanion(dayId: Value(dayId)),
+      );
+      _logger.finer('Stamped session ${session.id} with day $dayId');
+    }
+    return session.id;
   }
 }

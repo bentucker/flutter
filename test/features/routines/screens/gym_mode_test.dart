@@ -36,6 +36,7 @@ import 'package:wger/features/exercises/providers/exercises_notifier.dart';
 import 'package:wger/features/routines/models/repetition_unit.dart';
 import 'package:wger/features/routines/models/session.dart';
 import 'package:wger/features/routines/models/weight_unit.dart';
+import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
@@ -81,9 +82,14 @@ void main() {
   final mockLogRepo = MockWorkoutLogRepository();
   final mockUserProfileRepo = MockUserProfileRepository();
 
-  setUp(() {
+  setUp(() async {
     SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
     when(mockUserProfileRepo.watchDrift()).thenAnswer((_) => Stream.value(null));
+
+    // `PreferenceHelper.asyncPref` binds its backing store once, so clear that
+    // instance to keep the persisted active-workout pointer from leaking
+    // between tests in this file.
+    await PreferenceHelper.asyncPref.clear();
     when(mockSessionRepo.watchAllDrift()).thenAnswer(
       (_) => Stream<List<WorkoutSession>>.multi((controller) {
         controller.add(testRoutine.sessions);
@@ -556,6 +562,144 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(find.byType(LogPage), findsOneWidget);
         expect(find.text('Bench press'), findsOneWidget);
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'stale offline signal: cold-start deep link falls back to the fetch',
+    (WidgetTester tester) async {
+      // Regression: on a cold-start deep link (resume card) hydration is gone
+      // and the offline signal may be stale, so gym mode must attempt the
+      // fetch instead of failing with "not available offline".
+      final unhydrated = getTestRoutine();
+      unhydrated.isHydrated = false;
+      when(mockRoutinesRepo.watchAllDrift()).thenAnswer((_) => Stream.value([unhydrated]));
+
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode(isOnline: false));
+        await tester.pumpAndSettle();
+
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(TextButton)),
+        );
+        container.listen(routinesRiverpodProvider, (_, _) {});
+        await tester.pumpAndSettle();
+        clearInteractions(mockRoutinesRepo);
+
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(StreamErrorIndicator), findsNothing);
+        expect(find.byType(StartPage), findsOneWidget);
+        verify(mockRoutinesRepo.fetchAndSetRoutineFullServer(any)).called(1);
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'resume cursor is clamped against the prefs-shaped page tree',
+    (WidgetTester tester) async {
+      // Regression: the clamp ran against the default (maximal) page tree
+      // before prefs shrank it, so a resume could land on the summary page,
+      // whose onPageChanged clears the freshly restored state.
+      await PreferenceHelper.asyncPref.setBool(PREFS_SHOW_EXERCISES, false);
+      await PreferenceHelper.asyncPref.setBool(PREFS_SHOW_TIMER, false);
+
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await PreferenceHelper.asyncPref.setString(
+          PREFS_ACTIVE_WORKOUT,
+          '{"routineId":1,"dayId":1,"iteration":1,'
+          '"startedAt":"2025-03-29T13:00:00.000",'
+          '"currentPage":999,'
+          '"validUntil":"2025-03-29T18:00:00.000"}',
+        );
+
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(GymModeScreen)),
+        );
+        final state = container.read(gymStateProvider);
+        expect(state.isInitialized, true, reason: 'restored state must not be cleared on entry');
+        expect(
+          state.currentPage,
+          lessThan(state.totalPages - 1),
+          reason: 'resume must never land on the summary page',
+        );
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'End workout in the menu clears the resume pointer',
+    (WidgetTester tester) async {
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(GymModeScreen)),
+        );
+        // Entering gym mode wrote a pointer.
+        expect(container.read(activeWorkoutProvider).value, isNotNull);
+
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('End workout'));
+        await tester.pumpAndSettle();
+
+        expect(
+          container.read(activeWorkoutProvider).value,
+          isNull,
+          reason: 'an explicit End workout must stop offering the resume card',
+        );
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'workout menu: tapping an exercise jumps to its page and dismisses the dialog',
+    (WidgetTester tester) async {
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(StartPage), findsOneWidget);
+
+        // Open the workout menu dialog (the one with End workout / Close)
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+
+        // Tap the second exercise in the navigation list
+        await tester.tap(find.text('Side raises').last);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsNothing, reason: 'tap must dismiss the dialog');
+
+        // Close button must also dismiss
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.text('Close'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsNothing, reason: 'Close must dismiss the dialog');
       });
     },
     semanticsEnabled: false,
