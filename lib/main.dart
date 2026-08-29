@@ -142,7 +142,13 @@ void main() async {
   // Catch errors from Flutter itself (widget build, layout, paint, etc.)
   FlutterError.onError = (FlutterErrorDetails details) {
     final stack = details.stack ?? StackTrace.empty;
-    logger.severe('Error caught by FlutterError.onError: ${details.exception}');
+    // The full details name the error-causing widget, which the exception and
+    // stack alone do not; keep them in the log store so error reports carry
+    // them after the console buffer has rotated.
+    logger.severe(
+      'Error caught by FlutterError.onError: ${details.exception}\n'
+      '${details.toString(minLevel: DiagnosticLevel.info)}',
+    );
     FlutterError.dumpErrorToConsole(details);
     handleError(details.exception, stack);
   };
