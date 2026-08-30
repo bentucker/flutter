@@ -53,47 +53,54 @@ class DashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final width = MediaQuery.sizeOf(context).width;
-    final isMobile = width < MATERIAL_XS_BREAKPOINT;
     final visibleWidgets = ref.watch(
       appSettingsProvider.select(
         (s) => (s.value?.dashboardItems ?? defaultDashboardItems).visibleWidgets,
       ),
     );
 
-    late final int crossAxisCount;
-    if (width < MATERIAL_XS_BREAKPOINT) {
-      crossAxisCount = 1;
-    } else if (width < MATERIAL_MD_BREAKPOINT) {
-      crossAxisCount = 2;
-    } else if (width < MATERIAL_LG_BREAKPOINT) {
-      crossAxisCount = 3;
-    } else {
-      crossAxisCount = 4;
-    }
-
     return Scaffold(
       appBar: MainAppBar(AppLocalizations.of(context).labelDashboard),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: MATERIAL_LG_BREAKPOINT),
-          child: isMobile
-              ? ListView.builder(
+          // The column count must come from the layout-time width: during a
+          // rotation the MediaQuery width and the actual layout width can
+          // disagree for a frame, and a count chosen for the wide axis laid
+          // out at the narrow one produces cells too small for their content
+          // (observed: 87 px cells, ListTiles asserting on padding alone).
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              if (width < MATERIAL_XS_BREAKPOINT) {
+                return ListView.builder(
                   padding: const EdgeInsets.all(10),
                   itemBuilder: (context, index) => _getDashboardWidget(visibleWidgets[index]),
                   itemCount: visibleWidgets.length,
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(10),
-                  itemBuilder: (context, index) => SingleChildScrollView(
-                    child: _getDashboardWidget(visibleWidgets[index]),
-                  ),
-                  itemCount: visibleWidgets.length,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    childAspectRatio: 0.7,
-                  ),
+                );
+              }
+
+              final int crossAxisCount;
+              if (width < MATERIAL_MD_BREAKPOINT) {
+                crossAxisCount = 2;
+              } else if (width < MATERIAL_LG_BREAKPOINT) {
+                crossAxisCount = 3;
+              } else {
+                crossAxisCount = 4;
+              }
+              return GridView.builder(
+                padding: const EdgeInsets.all(10),
+                itemBuilder: (context, index) => SingleChildScrollView(
+                  child: _getDashboardWidget(visibleWidgets[index]),
                 ),
+                itemCount: visibleWidgets.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: 0.7,
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
