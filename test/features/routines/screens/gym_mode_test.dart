@@ -678,6 +678,23 @@ void main() {
           container.read(gymStateProvider).currentPage,
           container.read(gymStateProvider).totalPages - 2,
         );
+
+        // Regression 2: saving the form must transition straight to the
+        // summary. clear()-on-arrival used to empty the page tree while the
+        // controller sat at a high index, blanking the viewport until a
+        // manual swipe and wiping the stats the summary renders.
+        when(mockSessionRepo.addLocalDrift(any)).thenAnswer(
+          (inv) async => inv.positionalArguments.first as WorkoutSession,
+        );
+        await tester.tap(find.byKey(const ValueKey('save-button')));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(WorkoutSummary), findsOneWidget);
+        expect(
+          container.read(gymStateProvider).isInitialized,
+          true,
+          reason: 'summary stats must not be wiped on arrival',
+        );
       });
     },
     semanticsEnabled: false,

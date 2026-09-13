@@ -200,12 +200,10 @@ class _GymModeState extends ConsumerState<GymMode> {
             controller: _controller,
             onPageChanged: (page) {
               ref.read(gymStateProvider.notifier).setCurrentPage(page);
-
-              // Check if the last page is reached
-              if (page == children.length - 1) {
-                widget._logger.finer('Last page reached, clearing gym state');
-                ref.read(gymStateProvider.notifier).clear();
-              }
+              // No clear() on reaching the summary: it empties the page tree
+              // while the controller still sits at a high index, blanking the
+              // viewport until a manual swipe, and it wipes the state the
+              // summary is rendering. The summary's End workout button clears.
             },
             children: children,
           );
