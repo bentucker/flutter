@@ -457,10 +457,13 @@ void main() {
       await tester.tap(find.byType(TextButton));
       await tester.pumpAndSettle();
 
-      // Jump straight to the summary via the menu's "End workout" shortcut.
+      // End workout lands on the session form; the summary is one swipe on.
       await tester.tap(find.byIcon(Icons.menu));
       await tester.pumpAndSettle();
       await tester.tap(find.text('End workout'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionPage), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.chevron_right));
       await tester.pumpAndSettle();
 
       expect(find.byType(WorkoutSummary), findsOneWidget);
@@ -499,10 +502,13 @@ void main() {
       await tester.tap(find.byType(TextButton));
       await tester.pumpAndSettle();
 
-      // Jump straight to the summary via the menu's "End workout" shortcut.
+      // End workout lands on the session form; the summary is one swipe on.
       await tester.tap(find.byIcon(Icons.menu));
       await tester.pumpAndSettle();
       await tester.tap(find.text('End workout'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionPage), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.chevron_right));
       await tester.pumpAndSettle();
 
       expect(find.byType(WorkoutSummary), findsOneWidget);
@@ -663,6 +669,14 @@ void main() {
           container.read(activeWorkoutProvider).value,
           isNull,
           reason: 'an explicit End workout must stop offering the resume card',
+        );
+        // Regression: animating to totalPages overscrolled one past the
+        // summary, showing a blank page until a manual swipe. End workout
+        // must land on the session form.
+        expect(find.byType(SessionPage), findsOneWidget);
+        expect(
+          container.read(gymStateProvider).currentPage,
+          container.read(gymStateProvider).totalPages - 2,
         );
       });
     },

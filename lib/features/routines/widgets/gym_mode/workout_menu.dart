@@ -423,8 +423,11 @@ class WorkoutMenuDialog extends ConsumerWidget {
             onPressed: () {
               // Explicit end: stop offering the resume card for this workout.
               ref.read(activeWorkoutProvider.notifier).finish();
+              // Session form page: the last valid index is totalPages - 1 (the
+              // summary); animating to totalPages overscrolls into a blank
+              // page, and skipping the form would lose the session times.
               controller.animateToPage(
-                gymState.totalPages,
+                gymState.totalPages - 2,
                 duration: DEFAULT_ANIMATION_DURATION,
                 curve: DEFAULT_ANIMATION_CURVE,
               );
