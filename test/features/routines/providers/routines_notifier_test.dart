@@ -18,11 +18,13 @@
 
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/features/account/models/user_profile.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
 import 'package:wger/features/exercises/providers/exercises_notifier.dart';
@@ -37,6 +39,7 @@ import 'package:wger/features/routines/models/slot_data.dart';
 import 'package:wger/features/routines/models/slot_entry.dart';
 import 'package:wger/features/routines/providers/routines_notifier.dart';
 import 'package:wger/features/routines/providers/routines_repository.dart';
+import 'package:wger/features/routines/providers/workout_session_notifier.dart';
 
 import '../../../../test_data/exercises.dart';
 import '../../../../test_data/routines.dart';
@@ -563,6 +566,98 @@ void main() {
       final routines = container.read(routinesRiverpodProvider).value!.routines;
       final rehydrated = routines.singleWhere((r) => r.id == 101);
       expect(rehydrated.dayDataGym[0].slots[0].setConfigs[0].weightUnit, testWeightUnit1);
+    });
+  });
+
+  group('log-driven schedule refresh', () {
+    // Days that need logs to advance make the server's date sequence move with
+    // every session and every calendar day, so the hydrated REST copy must be
+    // re-fetched when those inputs change, not kept for the app's lifetime.
+    late StreamController<List<WorkoutSession>> sessions;
+
+    Routine routineWithDays({required bool needLogs}) => Routine(
+      id: 101,
+      name: 'Test routine',
+      days: [Day(id: 15, routineId: 101, name: 'Test Day', order: 1, needLogsToAdvance: needLogs)],
+      isHydrated: true,
+    );
+
+    WorkoutSession sessionOf(int routineId) =>
+        WorkoutSession(routineId: routineId, dayId: 15, datetimeStart: clock.now());
+
+    Future<ProviderContainer> hydrated({bool online = true, bool needLogs = true}) async {
+      sessions = StreamController<List<WorkoutSession>>.broadcast();
+      addTearDown(sessions.close);
+      when(mockSessionRepo.watchAllDrift()).thenAnswer((_) => sessions.stream);
+      when(
+        mockRepo.fetchAndSetRoutineFullServer(101),
+      ).thenAnswer((_) async => routineWithDays(needLogs: needLogs));
+      final container = ProviderContainer.test(
+        overrides: [
+          routinesRepositoryProvider.overrideWithValue(mockRepo),
+          networkStatusProvider.overrideWithValue(online),
+          ...ambientOverrides(),
+        ],
+      );
+      container.listen(routinesRiverpodProvider, (_, _) {});
+      container.listen(workoutSessionProvider, (_, _) {});
+      await pumpEventQueue();
+      sessions.add(const []);
+      await container.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(101);
+      await pumpEventQueue();
+      clearInteractions(mockRepo);
+      return container;
+    }
+
+    test('a new session for the routine re-fetches its schedule', () async {
+      await hydrated();
+
+      sessions.add([sessionOf(101)]);
+      await pumpEventQueue();
+
+      verify(mockRepo.fetchAndSetRoutineFullServer(101)).called(1);
+    });
+
+    test('sessions of other routines do not re-fetch', () async {
+      await hydrated();
+
+      sessions.add([sessionOf(999)]);
+      await pumpEventQueue();
+
+      verifyNever(mockRepo.fetchAndSetRoutineFullServer(any));
+    });
+
+    test('a new calendar day re-fetches on the next check', () async {
+      final day = DateTime(2026, 10, 2, 9);
+      late ProviderContainer container;
+      await withClock(Clock.fixed(day), () async {
+        container = await hydrated();
+      });
+
+      withClock(Clock.fixed(day.add(const Duration(days: 1))), () {
+        container.read(routinesRiverpodProvider.notifier).refreshStaleSchedules();
+      });
+      await pumpEventQueue();
+
+      verify(mockRepo.fetchAndSetRoutineFullServer(101)).called(1);
+    });
+
+    test('no re-fetch while offline', () async {
+      await hydrated(online: false);
+
+      sessions.add([sessionOf(101)]);
+      await pumpEventQueue();
+
+      verifyNever(mockRepo.fetchAndSetRoutineFullServer(any));
+    });
+
+    test('fixed-schedule routines are not re-fetched', () async {
+      await hydrated(needLogs: false);
+
+      sessions.add([sessionOf(101)]);
+      await pumpEventQueue();
+
+      verifyNever(mockRepo.fetchAndSetRoutineFullServer(any));
     });
   });
 

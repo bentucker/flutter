@@ -44,6 +44,24 @@ class DashboardRoutineWidget extends ConsumerStatefulWidget {
 class _DashboardRoutineWidgetState extends ConsumerState<DashboardRoutineWidget> {
   var _showDetail = false;
 
+  /// Log-driven schedules shift with the calendar day, which is most often
+  /// noticed when the app comes back from the background.
+  late final AppLifecycleListener _lifecycleListener;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () => ref.read(routinesRiverpodProvider.notifier).refreshStaleSchedules(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycleListener.dispose();
+    super.dispose();
+  }
+
   /// Renders the dashboard card shell so loading / error / empty / data
   /// states all share the same outline (icon + title) instead of the card
   /// hopping around. The trailing widget changes per state.

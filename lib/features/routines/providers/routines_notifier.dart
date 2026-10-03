@@ -16,12 +16,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+import 'dart:async';
+
+import 'package:clock/clock.dart';
 import 'package:collection/collection.dart';
 import 'package:logging/logging.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:wger/core/build_safety.dart';
 import 'package:wger/core/consts.dart';
 import 'package:wger/core/helpers.dart';
+import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/exercises/providers/exercises_notifier.dart';
 import 'package:wger/features/routines/models/day.dart';
@@ -224,6 +228,55 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
     }
     current.routines.forEach(_hydrateRoutine);
     state = AsyncData(RoutinesState(routines: List.of(current.routines)));
+    refreshStaleSchedules();
+  }
+
+  /// Schedule inputs each hydrated routine's date sequences were fetched
+  /// against, keyed by routine id.
+  final _scheduleBasis = <int, String>{};
+
+  /// The local date plus the (date, day) of every session of [routineId]:
+  /// everything a log-driven date sequence depends on.
+  String _scheduleSignature(int routineId) {
+    final sessions = ref.read(workoutSessionProvider).value ?? const <WorkoutSession>[];
+    final logged = [
+      for (final session in sessions)
+        if (session.routineId == routineId)
+          '${_dayKey(session.datetimeStart.toLocal())}:${session.dayId}',
+    ]..sort();
+    return '${_dayKey(clock.now())}|${logged.join(',')}';
+  }
+
+  /// Re-fetches hydrated routines with log-driven days whose schedule inputs
+  /// changed since their last fetch.
+  ///
+  /// The server holds such a day until it is logged, so its date sequence
+  /// moves with every session and every calendar day, while a copy fetched
+  /// once keeps marching through its original one-day-per-day projection.
+  void refreshStaleSchedules() {
+    final routines = state.value?.routines ?? const <Routine>[];
+    final stale = [
+      for (final routine in routines)
+        if (routine.id != null &&
+            routine.isHydrated &&
+            routine.days.any((day) => day.needLogsToAdvance) &&
+            _scheduleBasis.containsKey(routine.id) &&
+            _scheduleBasis[routine.id] != _scheduleSignature(routine.id!))
+          routine.id!,
+    ];
+    if (stale.isEmpty || !ref.read(networkStatusProvider)) {
+      return;
+    }
+    for (final id in stale) {
+      _logger.fine('Schedule inputs changed, re-fetching routine $id');
+      unawaited(
+        fetchAndSetRoutineFull(id).then<void>(
+          (_) {},
+          onError: (Object e, StackTrace s) =>
+              _logger.warning('Schedule refresh for routine $id failed', e, s),
+        ),
+      );
+    }
   }
 
   /*
@@ -279,8 +332,10 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
     await ref.awaitFirstValue(workoutSessionProvider);
     await ref.awaitFirstValue(userProfileProvider);
 
+    final basis = _scheduleSignature(routineId);
     final routine = await repo.fetchAndSetRoutineFullServer(routineId);
     _hydrateRoutine(routine);
+    _scheduleBasis[routineId] = basis;
 
     // Inject the hydrated routine into the current state. Note: this is
     // a transient overlay, the next PowerSync stream tick re-emits the
@@ -441,3 +496,5 @@ Future<void> routineHydration(Ref ref, int routineId) async {
 
   await ref.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(routineId);
 }
+
+String _dayKey(DateTime date) => '${date.year}-${date.month}-${date.day}';
