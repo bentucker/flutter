@@ -18,6 +18,7 @@
 
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +28,7 @@ import 'package:wger/core/errors.dart';
 import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/core/widgets/progress_indicator.dart';
+import 'package:wger/features/routines/models/routine.dart';
 import 'package:wger/features/routines/providers/active_workout_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
@@ -66,6 +68,31 @@ class _GymModeState extends ConsumerState<GymMode> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  /// The iteration to log against: for routines with log-driven days, today's
+  /// iteration as read from the just-loaded [routine].
+  ///
+  /// The caller passes the iteration of the schedule copy it rendered, which
+  /// can predate sessions or calendar days that moved the server's log-driven
+  /// sequence (it holds a day until it is logged).
+  int _iterationFor(Routine routine) {
+    final passed = widget._args.iteration;
+    if (!routine.days.any((day) => day.needLogsToAdvance)) {
+      return passed;
+    }
+    final today = routine.getIteration(date: clock.now());
+    if (today == null || today == passed) {
+      return passed;
+    }
+    final scheduled = routine.dayDataGym.any(
+      (data) => data.iteration == today && data.day?.id == widget._args.dayId,
+    );
+    if (!scheduled) {
+      return passed;
+    }
+    widget._logger.info('Using iteration $today for day ${widget._args.dayId}, caller had $passed');
+    return today;
   }
 
   Future<int> _loadGymState() async {
@@ -111,7 +138,7 @@ class _GymModeState extends ConsumerState<GymMode> {
     var initialPage = gymViewModel.initData(
       routine,
       widget._args.dayId,
-      widget._args.iteration,
+      _iterationFor(routine),
     );
     await gymViewModel.loadPrefs();
     gymViewModel.calculatePages();

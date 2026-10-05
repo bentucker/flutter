@@ -26,6 +26,7 @@ import 'package:wger/features/health/providers/health_sync.dart';
 import 'package:wger/features/measurements/screens/measurement_categories_screen.dart';
 import 'package:wger/features/nutrition/screens/nutritional_plans_screen.dart';
 import 'package:wger/features/routines/screens/routine_list_screen.dart';
+import 'package:wger/features/routines/widgets/schedule_refresher.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
 class HomeTabsScreen extends ConsumerStatefulWidget {
@@ -136,14 +137,16 @@ class _HomeTabsScreenState extends ConsumerState<HomeTabsScreen>
       );
     }
 
-    return Scaffold(
-      body: Row(
-        children: [
-          if (_isWideScreen) getNavigationRail(),
-          Expanded(child: _screenList.elementAt(_selectedIndex)),
-        ],
+    return RoutineScheduleRefresher(
+      child: Scaffold(
+        body: Row(
+          children: [
+            if (_isWideScreen) getNavigationRail(),
+            Expanded(child: _screenList.elementAt(_selectedIndex)),
+          ],
+        ),
+        bottomNavigationBar: _isWideScreen ? null : getNavigationBar(),
       ),
-      bottomNavigationBar: _isWideScreen ? null : getNavigationBar(),
     );
   }
 }

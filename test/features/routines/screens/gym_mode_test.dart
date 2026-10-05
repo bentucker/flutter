@@ -33,6 +33,7 @@ import 'package:wger/core/widgets/error.dart';
 import 'package:wger/features/account/providers/user_profile_repository.dart';
 import 'package:wger/features/exercises/providers/exercise_repository.dart';
 import 'package:wger/features/exercises/providers/exercises_notifier.dart';
+import 'package:wger/features/routines/models/day_data.dart';
 import 'package:wger/features/routines/models/repetition_unit.dart';
 import 'package:wger/features/routines/models/session.dart';
 import 'package:wger/features/routines/models/weight_unit.dart';
@@ -128,6 +129,7 @@ void main() {
     locale = 'en',
     bool isOnline = true,
     List<riverpod.Override> extraOverrides = const [],
+    GymModeArguments args = const GymModeArguments(1, 1, 1),
   }) {
     return riverpod.ProviderScope(
       overrides: [
@@ -156,7 +158,7 @@ void main() {
         home: TextButton(
           onPressed: () => key.currentState!.push(
             MaterialPageRoute<void>(
-              settings: const RouteSettings(arguments: GymModeArguments(1, 1, 1)),
+              settings: RouteSettings(arguments: args),
               builder: (_) => const GymModeScreen(),
             ),
           ),
@@ -695,6 +697,47 @@ void main() {
           true,
           reason: 'summary stats must not be wiped on arrival',
         );
+      });
+    },
+    semanticsEnabled: false,
+  );
+
+  testWidgets(
+    'log-driven routine: logs against the fetched iteration, not a stale caller',
+    (WidgetTester tester) async {
+      // Regression: gym mode took the iteration from the tapped row, rendered
+      // from a schedule copy that predated the server holding the day, and
+      // stamped the whole workout with the next week's iteration.
+      final today = DateTime(2025, 3, 29);
+      final routine = getTestRoutine();
+      for (final day in routine.days) {
+        day.needLogsToAdvance = true;
+      }
+      final entry = routine.dayDataGym.firstWhere((data) => data.day?.id == 1);
+      routine.dayData = [DayData(iteration: 1, date: today, day: entry.day)];
+      routine.dayDataGym = [
+        ...routine.dayDataGym,
+        DayData(
+          iteration: 2,
+          date: today.add(const Duration(days: 2)),
+          day: entry.day,
+          slots: entry.slots,
+        ),
+      ];
+      when(mockRoutinesRepo.watchAllDrift()).thenAnswer((_) => Stream.value([routine]));
+      when(mockRoutinesRepo.fetchAndSetRoutineFullServer(any)).thenAnswer((_) async => routine);
+
+      await withClock(Clock.fixed(DateTime(2025, 3, 29, 14, 33)), () async {
+        await tester.pumpWidget(renderGymMode(args: const GymModeArguments(1, 1, 2)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(TextButton));
+        await tester.pumpAndSettle();
+
+        final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(GymModeScreen)),
+        );
+        expect(tester.takeException(), isNull);
+        expect(container.read(gymStateProvider).iteration, 1);
       });
     },
     semanticsEnabled: false,
