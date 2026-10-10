@@ -160,6 +160,16 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
 
     routine.sessions = sessions.where((s) => s.routineId == routine.id).toList();
 
+    final fetched = _fetchedSchedules[routine.id];
+    if (fetched != null && routine.days.any((day) => day.needLogsToAdvance)) {
+      routine.dayData = replayLogDrivenSchedule(
+        fetched.dayData,
+        fetchedOn: fetched.on,
+        sessions: routine.sessions,
+        today: clock.now(),
+      );
+    }
+
     if (exerciseState != null) {
       for (final session in routine.sessions) {
         for (final log in session.logs) {
@@ -228,8 +238,17 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
     }
     current.routines.forEach(_hydrateRoutine);
     state = AsyncData(RoutinesState(routines: List.of(current.routines)));
-    refreshStaleSchedules();
+    _refetchStaleSchedules();
   }
+
+  /// Brings log-driven schedules up to date: replays them from the synced
+  /// sessions (which also works offline) and re-fetches the server's view
+  /// when their inputs changed and the server is reachable.
+  void refreshStaleSchedules() => _rehydrate();
+
+  /// Each routine's date sequence as last fetched, with the moment of the
+  /// fetch, keyed by routine id; the input of [replayLogDrivenSchedule].
+  final _fetchedSchedules = <int, ({List<DayData> dayData, DateTime on})>{};
 
   /// Schedule inputs each hydrated routine's date sequences were fetched
   /// against, keyed by routine id.
@@ -253,7 +272,7 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
   /// The server holds such a day until it is logged, so its date sequence
   /// moves with every session and every calendar day, while a copy fetched
   /// once keeps marching through its original one-day-per-day projection.
-  void refreshStaleSchedules() {
+  void _refetchStaleSchedules() {
     final routines = state.value?.routines ?? const <Routine>[];
     final stale = [
       for (final routine in routines)
@@ -334,6 +353,7 @@ class RoutinesRiverpod extends _$RoutinesRiverpod {
 
     final basis = _scheduleSignature(routineId);
     final routine = await repo.fetchAndSetRoutineFullServer(routineId);
+    _fetchedSchedules[routineId] = (dayData: List.of(routine.dayData), on: clock.now());
     _hydrateRoutine(routine);
     _scheduleBasis[routineId] = basis;
 
@@ -496,5 +516,86 @@ Future<void> routineHydration(Ref ref, int routineId) async {
 
   await ref.read(routinesRiverpodProvider.notifier).fetchAndSetRoutineFull(routineId);
 }
+
+/// Replays a log-driven date sequence fetched on [fetchedOn] up to [today]
+/// with the locally known [sessions], so the schedule stays right offline.
+///
+/// Mirrors the server: a day that needs logs to advance is held until a
+/// session for it exists on the previous date, other entries advance daily,
+/// and dates after [today] are projected one entry per day. Entries before
+/// [fetchedOn] are history and kept as fetched; the entries from [fetchedOn]
+/// on are the rotation the server projected.
+List<DayData> replayLogDrivenSchedule(
+  List<DayData> fetched, {
+  required DateTime fetchedOn,
+  required List<WorkoutSession> sessions,
+  required DateTime today,
+}) {
+  final start = _dayOnly(fetchedOn);
+  final end = _dayOnly(today);
+  if (fetched.isEmpty || !end.isAfter(start)) {
+    return fetched;
+  }
+
+  final history = <DayData>[];
+  final rotation = <DayData>[];
+  for (final entry in fetched) {
+    if (_dayOnly(entry.date).isBefore(start)) {
+      history.add(entry);
+      continue;
+    }
+    // A server whose "today" is a calendar day ahead of the device holds the
+    // current day on two dates; it is still one step of the rotation.
+    final previous = rotation.lastOrNull;
+    final repeated =
+        previous != null &&
+        entry.day != null &&
+        previous.day?.id == entry.day!.id &&
+        previous.iteration == entry.iteration;
+    if (!repeated) {
+      rotation.add(entry);
+    }
+  }
+  if (rotation.isEmpty) {
+    return fetched;
+  }
+
+  final logged = {
+    for (final session in sessions)
+      if (session.dayId != null) '${_dayKey(session.datetimeStart.toLocal())}:${session.dayId}',
+  };
+  final last = _dayOnly(fetched.last.date);
+  final replayed = [...history];
+  var index = 0;
+  var date = start;
+  while (!date.isAfter(last) && index < rotation.length) {
+    final entry = rotation[index];
+    replayed.add(
+      DayData(
+        iteration: entry.iteration,
+        date: date,
+        label: entry.label,
+        day: entry.day,
+        slots: entry.slots,
+      ),
+    );
+    // Calendar arithmetic, not a 24 hour Duration, so DST changes can't skip
+    // or repeat a date
+    final next = DateTime(date.year, date.month, date.day + 1);
+    final day = entry.day;
+    final held =
+        !next.isAfter(end) &&
+        day != null &&
+        day.needLogsToAdvance &&
+        !logged.contains('${_dayKey(date)}:${day.id}');
+    if (!held) {
+      index++;
+    }
+    date = next;
+  }
+  return replayed;
+}
+
+DateTime _dayOnly(DateTime date) => DateTime(date.year, date.month, date.day);
 
 String _dayKey(DateTime date) => '${date.year}-${date.month}-${date.day}';

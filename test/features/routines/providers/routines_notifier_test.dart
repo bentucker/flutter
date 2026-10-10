@@ -569,16 +569,120 @@ void main() {
     });
   });
 
+  group('replayLogDrivenSchedule', () {
+    // This week's real case: the copy was fetched on Tue Oct 6 right after
+    // Lower B, then the phone was offline at the gym on Fri Oct 9.
+    final upperA = Day(id: 21, routineId: 6, name: 'Upper A', order: 1, needLogsToAdvance: true);
+    final lowerA = Day(id: 22, routineId: 6, name: 'Lower A', order: 2, needLogsToAdvance: true);
+    final upperB = Day(id: 23, routineId: 6, name: 'Upper B', order: 3, needLogsToAdvance: true);
+    final lowerB = Day(id: 24, routineId: 6, name: 'Lower B', order: 4, needLogsToAdvance: true);
+    final fetchedOn = DateTime(2026, 10, 6, 9, 15);
+
+    DayData at(int day, Day d, int iteration) =>
+        DayData(iteration: iteration, date: DateTime(2026, 10, day), day: d);
+
+    final fetched = [
+      at(5, upperB, 1), // history
+      at(6, lowerB, 1), // fetch date: the current, held day
+      at(7, upperA, 2), // projected one per day from here
+      at(8, lowerA, 2),
+      at(9, upperB, 2),
+      at(10, lowerB, 2),
+      at(11, upperA, 3),
+      at(12, lowerA, 3),
+    ];
+
+    WorkoutSession session(int day, Day d) =>
+        WorkoutSession(routineId: 6, dayId: d.id, datetimeStart: DateTime(2026, 10, day, 8, 30));
+
+    DayData on(List<DayData> data, int day) =>
+        data.firstWhere((e) => e.date == DateTime(2026, 10, day));
+
+    List<DayData> replay(List<WorkoutSession> sessions, int today) => replayLogDrivenSchedule(
+      fetched,
+      fetchedOn: fetchedOn,
+      sessions: sessions,
+      today: DateTime(2026, 10, today, 7),
+    );
+
+    test('a held day stays current until logged, offline', () {
+      final data = replay([session(6, lowerB)], 9);
+
+      expect(on(data, 7).day, upperA);
+      expect(on(data, 9).day, upperA, reason: 'Upper A not logged since Oct 7');
+      expect(on(data, 9).iteration, 2);
+      expect(on(data, 10).day, lowerA, reason: 'dates after today advance daily');
+    });
+
+    test('a session for a different day does not advance the schedule', () {
+      final data = replay([session(6, lowerB), session(9, upperB)], 10);
+
+      expect(on(data, 10).day, upperA);
+    });
+
+    test('logging the held day advances on the next date', () {
+      final data = replay([session(6, lowerB), session(8, upperA)], 9);
+
+      expect(on(data, 8).day, upperA);
+      expect(on(data, 9).day, lowerA);
+    });
+
+    test('history before the fetch date is kept as fetched', () {
+      final data = replay([session(6, lowerB)], 9);
+
+      expect(on(data, 5).day, upperB);
+      expect(on(data, 5).iteration, 1);
+    });
+
+    test('a copy fetched today is returned unchanged', () {
+      expect(replay(const [], 6), same(fetched));
+    });
+
+    test('a held day repeated by a server a day ahead is one rotation step', () {
+      final ahead = [at(6, lowerB, 1), at(7, lowerB, 1), at(8, upperA, 2), at(9, lowerA, 2)];
+      final data = replayLogDrivenSchedule(
+        ahead,
+        fetchedOn: fetchedOn,
+        sessions: [session(6, lowerB)],
+        today: DateTime(2026, 10, 7, 7),
+      );
+
+      expect(on(data, 7).day, upperA);
+    });
+
+    test('days without log-driven advancement keep the daily projection', () {
+      final daily = [
+        for (final d in [lowerB, upperA, lowerA, upperB])
+          Day(id: d.id, routineId: 6, name: d.name, order: d.order),
+      ];
+      final data = replayLogDrivenSchedule(
+        [for (var i = 0; i < 4; i++) at(6 + i, daily[i], 1)],
+        fetchedOn: fetchedOn,
+        sessions: const [],
+        today: DateTime(2026, 10, 9, 7),
+      );
+
+      expect(on(data, 9).day!.id, upperB.id);
+    });
+  });
+
   group('log-driven schedule refresh', () {
     // Days that need logs to advance make the server's date sequence move with
     // every session and every calendar day, so the hydrated REST copy must be
     // re-fetched when those inputs change, not kept for the app's lifetime.
     late StreamController<List<WorkoutSession>> sessions;
 
+    final day15 = Day(id: 15, routineId: 101, name: 'Test Day', order: 1, needLogsToAdvance: true);
+
     Routine routineWithDays({required bool needLogs}) => Routine(
       id: 101,
       name: 'Test routine',
       days: [Day(id: 15, routineId: 101, name: 'Test Day', order: 1, needLogsToAdvance: needLogs)],
+      // Projection fetched on Oct 2: one iteration per day
+      dayData: [
+        for (var i = 0; i < 5; i++)
+          DayData(iteration: i + 1, date: DateTime(2026, 10, 2 + i), day: day15),
+      ],
       isHydrated: true,
     );
 
@@ -640,6 +744,22 @@ void main() {
       await pumpEventQueue();
 
       verify(mockRepo.fetchAndSetRoutineFullServer(101)).called(1);
+    });
+
+    test('offline, the schedule is replayed from synced sessions', () async {
+      late ProviderContainer container;
+      await withClock(Clock.fixed(DateTime(2026, 10, 2, 9)), () async {
+        container = await hydrated(online: false);
+      });
+
+      // Two days later, nothing logged: the fetched copy says iteration 3, but
+      // the day is still held at iteration 1.
+      withClock(Clock.fixed(DateTime(2026, 10, 4, 9)), () {
+        container.read(routinesRiverpodProvider.notifier).refreshStaleSchedules();
+      });
+      final routine = container.read(routinesRiverpodProvider).value!.routines.single;
+      expect(routine.getIteration(date: DateTime(2026, 10, 4)), 1);
+      verifyNever(mockRepo.fetchAndSetRoutineFullServer(any));
     });
 
     test('no re-fetch while offline', () async {
