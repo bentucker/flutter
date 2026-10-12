@@ -22,12 +22,19 @@ import 'package:wger/core/widgets/confirm_delete_dialog.dart';
 import 'package:wger/features/routines/models/log.dart';
 import 'package:wger/features/routines/providers/workout_logs_notifier.dart';
 
-/// Confirms and deletes [log], showing a success snackbar afterwards.
-void showDeleteLogDialog(BuildContext context, String confirmDeleteName, Log log) {
+/// Confirms and deletes [log], showing a success snackbar afterwards and then
+/// calling [onDeleted].
+void showDeleteLogDialog(
+  BuildContext context,
+  String confirmDeleteName,
+  Log log, {
+  VoidCallback? onDeleted,
+}) {
   showConfirmDeleteDialog(
     context,
     itemName: confirmDeleteName,
     onConfirm: () =>
         ProviderScope.containerOf(context).read(workoutLogProvider).deleteEntry(log.id.toString()),
+    onDeleted: onDeleted,
   );
 }

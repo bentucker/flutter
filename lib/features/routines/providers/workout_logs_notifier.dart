@@ -51,14 +51,14 @@ Stream<List<Log>> pastExerciseLogs(
         exerciseId: exerciseId,
         since: cutoff,
       )
-      .map((logs) => distinct ? _deduplicate(logs) : logs);
+      .map((logs) => distinct ? deduplicateLogs(logs) : logs);
 }
 
 /// Keeps only the first log of each repetitions/weight combination, units included.
 ///
 /// Expects [logs] to be sorted newest first, so the newest log of each
 /// combination survives.
-List<Log> _deduplicate(List<Log> logs) {
+List<Log> deduplicateLogs(List<Log> logs) {
   final seen = <(num?, int?, num?, int?)>{};
 
   return logs

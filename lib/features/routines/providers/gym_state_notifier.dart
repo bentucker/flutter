@@ -509,6 +509,44 @@ class GymStateNotifier extends _$GymStateNotifier {
     _savePrefs();
   }
 
+  /// Unticks one done set of [slotEntryId]/[exerciseId] after one of this
+  /// workout's logs for it was deleted, so the set can be logged again.
+  ///
+  /// Re-derives the ticks from the lowered count, like the restore on entry
+  /// (the first sets in page order are the done ones), so a deleted extra set
+  /// beyond the prescribed ones leaves every set ticked.
+  void logDeleted({required int? slotEntryId, required int exerciseId}) {
+    final key = (slotEntryId, exerciseId);
+    final count = _logCountsBySlot[key] ?? 0;
+    if (count == 0) {
+      return;
+    }
+    _logCountsBySlot[key] = count - 1;
+
+    var remaining = count - 1;
+    final pages = <PageEntry>[];
+    for (final page in state.pages) {
+      if (page.type != PageType.set) {
+        pages.add(page);
+        continue;
+      }
+      final slotPages = <SlotPageEntry>[];
+      for (final slotPage in page.slotPages) {
+        final cfg = slotPage.setConfigData;
+        if (slotPage.type != SlotPageType.log ||
+            cfg == null ||
+            (cfg.slotEntryId, cfg.exercise.id) != key) {
+          slotPages.add(slotPage);
+          continue;
+        }
+        slotPages.add(slotPage.copyWith(logDone: remaining > 0));
+        remaining--;
+      }
+      pages.add(page.copyWith(slotPages: slotPages));
+    }
+    state = state.copyWith(pages: pages);
+  }
+
   void markSlotPageAsDone(String uuid, {required bool isDone}) {
     final slotPage = state.getSlotPageByUUID(uuid);
     if (slotPage == null) {

@@ -40,6 +40,7 @@ import 'package:wger/features/routines/providers/gym_state_notifier.dart';
 import 'package:wger/features/routines/providers/plate_weights.dart';
 import 'package:wger/features/routines/providers/workout_logs_repository.dart';
 import 'package:wger/features/routines/widgets/gym_mode/log_page.dart';
+import 'package:wger/features/routines/widgets/logs/log_edit_dialog.dart';
 import 'package:wger/features/routines/widgets/plate_calculator.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
@@ -228,6 +229,142 @@ void main() {
       container.read(plateCalculatorProvider.notifier).setBarless(log.exerciseId, true);
       await tester.pump();
       expect(shown(), expected(0));
+    });
+
+    group('this workout', () {
+      // Two identical sets saved during this workout (the second by mistake),
+      // plus the fixture's older logs
+      late List<Log> current;
+      // The older log the current sets were copied from: same numbers
+      late String twinId;
+
+      Future<void> pumpWithCurrentLogs(WidgetTester tester) async {
+        // Phone-sized, so the lazily built list reaches the older logs
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 2;
+        addTearDown(tester.view.reset);
+        seedLogPage(testdata.getTestRoutine());
+        final page = container.read(gymStateProvider).getSlotEntryPageByIndex()!;
+        final cfg = page.setConfigData!;
+        final template = testdata.getTestRoutine().filterLogsByExercise(cfg.exerciseId).first;
+        twinId = template.id!;
+        final now = container.read(gymStateProvider).workoutStart;
+        current = [
+          for (final (i, id) in ['now-1', 'now-2'].indexed)
+            asDriftLog(
+              template.copyWith(
+                date: now.add(Duration(minutes: 1 + i)),
+                slotEntryId: cfg.slotEntryId,
+                exerciseId: cfg.exerciseId,
+              )..id = id,
+            ),
+        ];
+        when(
+          mockWorkoutLogRepo.watchLogsByExerciseDrift(
+            routineId: anyNamed('routineId'),
+            exerciseId: anyNamed('exerciseId'),
+            since: anyNamed('since'),
+          ),
+        ).thenAnswer(
+          (_) => Stream.value([
+            ...current.reversed,
+            ...testdata.getTestRoutine().filterLogsByExercise(cfg.exerciseId).map(asDriftLog),
+          ]),
+        );
+        when(mockWorkoutLogRepo.deleteLocalDrift(any)).thenAnswer((_) async {});
+        await pumpLogPage(tester);
+      }
+
+      testWidgets('lists every set of this workout, duplicates included', (tester) async {
+        await pumpWithCurrentLogs(tester);
+
+        expect(find.text('Your workout today'), findsOneWidget);
+        expect(find.byKey(const ValueKey('current-log-now-1')), findsOneWidget);
+        expect(find.byKey(const ValueKey('current-log-now-2')), findsOneWidget);
+        // Only this workout's sets get the menu
+        final menu = find.byWidgetPredicate((w) => w is PopupMenuButton);
+        final pastRows = find.byWidgetPredicate(
+          (w) => w.key is ValueKey && '${(w.key as ValueKey).value}'.startsWith('past-log-'),
+        );
+        expect(pastRows, findsWidgets, reason: 'older logs must still be listed');
+        // Collapsing identical sets must not fold an older set into today's
+        expect(find.byKey(ValueKey('past-log-$twinId')), findsOneWidget);
+        expect(find.descendant(of: pastRows.first, matching: menu), findsNothing);
+        expect(
+          find.descendant(of: find.byKey(const ValueKey('current-log-now-1')), matching: menu),
+          findsOneWidget,
+        );
+      });
+
+      testWidgets('edit opens the log edit dialog', (tester) async {
+        await pumpWithCurrentLogs(tester);
+
+        await tester.tap(find.byKey(const ValueKey('current-log-menu-now-2')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Edit'));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(LogEditDialog), findsOneWidget);
+      });
+
+      testWidgets('delete removes the set after confirming and unticks one set', (tester) async {
+        await pumpWithCurrentLogs(tester);
+        final gym = container.read(gymStateProvider.notifier);
+        final uuid = container.read(gymStateProvider).getSlotEntryPageByIndex()!.uuid;
+        gym.markSlotPageAsDone(uuid, isDone: true);
+        expect(container.read(gymStateProvider).getSlotEntryPageByIndex()!.logDone, true);
+
+        await tester.tap(find.byKey(const ValueKey('current-log-menu-now-2')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        verifyNever(mockWorkoutLogRepo.deleteLocalDrift(any));
+        await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+        await tester.pumpAndSettle();
+
+        verify(mockWorkoutLogRepo.deleteLocalDrift('now-2')).called(1);
+        expect(container.read(gymStateProvider).getSlotEntryPageByIndex()!.logDone, false);
+      });
+
+      testWidgets('copy fills the form like tapping the row', (tester) async {
+        await pumpWithCurrentLogs(tester);
+
+        await tester.tap(find.byKey(const ValueKey('current-log-menu-now-1')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Copy'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Data copied to new entry'), findsOneWidget);
+        expect(container.read(gymLogProvider)!.weight, current.first.weight);
+      });
+    });
+
+    test('logDeleted keeps every set ticked when an extra set is removed', () {
+      seedLogPage(testdata.getTestRoutine());
+      final state = container.read(gymStateProvider);
+      final cfg = state.getSlotEntryPageByIndex()!.setConfigData!;
+      bool matches(SlotPageEntry sp) =>
+          sp.type == SlotPageType.log &&
+          sp.setConfigData?.slotEntryId == cfg.slotEntryId &&
+          sp.setConfigData?.exercise.id == cfg.exercise.id;
+      List<bool> ticks() => [
+        for (final page in container.read(gymStateProvider).pages)
+          for (final sp in page.slotPages)
+            if (matches(sp)) sp.logDone,
+      ];
+      final sets = ticks().length;
+      final gym = container.read(gymStateProvider.notifier);
+      final uuid = state.getSlotEntryPageByIndex()!.uuid;
+      // One more log than prescribed sets
+      for (var i = 0; i <= sets; i++) {
+        gym.markSlotPageAsDone(uuid, isDone: true);
+      }
+
+      gym.logDeleted(slotEntryId: cfg.slotEntryId, exerciseId: cfg.exercise.id);
+      expect(ticks(), List.filled(sets, true), reason: 'the extra set was the one removed');
+
+      gym.logDeleted(slotEntryId: cfg.slotEntryId, exerciseId: cfg.exercise.id);
+      expect(ticks(), [...List.filled(sets - 1, true), false]);
     });
 
     testWidgets('renders without crashing for the default slot entry page', (tester) async {
