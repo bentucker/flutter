@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wger/core/consts.dart';
+import 'package:wger/features/exercises/models/exercise.dart';
 import 'package:wger/features/routines/providers/plate_weights.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
@@ -58,7 +59,11 @@ class PlateWeight extends StatelessWidget {
 }
 
 class ConfigureAvailablePlates extends ConsumerStatefulWidget {
-  const ConfigureAvailablePlates({super.key});
+  const ConfigureAvailablePlates({this.exercise, super.key});
+
+  /// The exercise the screen was opened from, if any; per-exercise settings
+  /// are only offered with one
+  final Exercise? exercise;
 
   @override
   ConsumerState<ConfigureAvailablePlates> createState() => _AddPlateWeightsState();
@@ -130,6 +135,14 @@ class _AddPlateWeightsState extends ConsumerState<ConfigureAvailablePlates> {
             }).toList(),
           ),
         ),
+        if (widget.exercise case final exercise?)
+          SwitchListTile(
+            key: const ValueKey('barlessSwitch'),
+            title: Text(i18n.plateCalculatorNoBar),
+            subtitle: Text(i18n.plateCalculatorNoBarHint),
+            value: plateWeightsState.barlessExercises.contains(exercise.id),
+            onChanged: (value) => plateWeightsNotifier.setBarless(exercise.id, value),
+          ),
         SwitchListTile(
           key: const ValueKey('useColorsSwitch'),
           title: Text(i18n.useColors),

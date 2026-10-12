@@ -51,6 +51,10 @@ class PlateCalculatorState {
   final num totalWeight;
   final num barWeight;
   final List<num> selectedPlates;
+
+  /// Exercises done on a plate-loaded machine without a bar: their whole
+  /// weight is split over both sides.
+  final Set<int> barlessExercises;
   final List<num> availablePlatesKg = const [0.5, 1, 1.25, 2, 2.5, 5, 10, 15, 20, 25];
   final List<num> availablePlatesLb = const [2.5, 5, 10, 25, 35, 45];
 
@@ -63,9 +67,11 @@ class PlateCalculatorState {
     this.isMetric = true,
     this.totalWeight = 0,
     List<num>? selectedPlates,
+    Set<int>? barlessExercises,
   }) : barWeight = barWeight ?? (isMetric ? DEFAULT_BAR_WEIGHT_KG : DEFAULT_BAR_WEIGHT_LB),
        selectedPlates =
-           selectedPlates ?? (isMetric ? [...DEFAULT_KG_PLATES] : [...DEFAULT_LB_PLATES]);
+           selectedPlates ?? (isMetric ? [...DEFAULT_KG_PLATES] : [...DEFAULT_LB_PLATES]),
+       barlessExercises = barlessExercises ?? const {};
 
   PlateCalculatorState.fromJson(Map<String, dynamic> plateData)
     : useColors = plateData['useColors'] ?? true,
@@ -74,6 +80,7 @@ class PlateCalculatorState {
       barWeight =
           plateData['barWeight'] ??
           ((plateData['isMetric'] ?? true) ? DEFAULT_BAR_WEIGHT_KG : DEFAULT_BAR_WEIGHT_LB),
+      barlessExercises = {...?(plateData['barlessExercises'] as List?)?.cast<int>()},
       totalWeight = 0;
 
   PlateCalculatorState copyWith({
@@ -82,6 +89,7 @@ class PlateCalculatorState {
     num? totalWeight,
     num? barWeight,
     List<num>? selectedPlates,
+    Set<int>? barlessExercises,
   }) {
     return PlateCalculatorState(
       useColors: useColors ?? this.useColors,
@@ -89,6 +97,7 @@ class PlateCalculatorState {
       totalWeight: totalWeight ?? this.totalWeight,
       barWeight: barWeight ?? this.barWeight,
       selectedPlates: selectedPlates ?? this.selectedPlates,
+      barlessExercises: barlessExercises ?? this.barlessExercises,
     );
   }
 
@@ -98,8 +107,13 @@ class PlateCalculatorState {
       'isMetric': isMetric,
       'selectedPlates': selectedPlates,
       'barWeight': barWeight,
+      'barlessExercises': barlessExercises.toList(),
     };
   }
+
+  /// The bar weight to subtract for [exerciseId]: none on a barless machine
+  num barWeightFor(int? exerciseId) =>
+      exerciseId != null && barlessExercises.contains(exerciseId) ? 0 : barWeight;
 
   List<num> get availablePlates {
     return isMetric ? availablePlatesKg : availablePlatesLb;
@@ -182,6 +196,17 @@ class PlateCalculatorNotifier extends Notifier<PlateCalculatorState> {
   void setBarWeight(num x) {
     _logger.fine('Setting bar weight to $x');
     state = state.copyWith(barWeight: x);
+    unawaited(saveToSharedPrefs());
+  }
+
+  void setBarless(int exerciseId, bool barless) {
+    final updated = {...state.barlessExercises};
+    if (barless) {
+      updated.add(exerciseId);
+    } else {
+      updated.remove(exerciseId);
+    }
+    state = state.copyWith(barlessExercises: updated);
     unawaited(saveToSharedPrefs());
   }
 

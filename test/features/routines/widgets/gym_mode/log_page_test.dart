@@ -206,6 +206,30 @@ void main() {
       expect(find.byType(PlateWeight), findsNWidgets(updated.length));
     });
 
+    testWidgets('a barless exercise splits the whole weight over both sides', (tester) async {
+      seedLogPage(testdata.getTestRoutine());
+      await pumpLogPage(tester);
+      final log = container.read(gymLogProvider)!;
+      final plates = container.read(plateCalculatorProvider);
+      List<num> shown() =>
+          tester.widgetList<PlateWeight>(find.byType(PlateWeight)).map((w) => w.value).toList();
+      List<num> expected(num bar) =>
+          groupPlates(plateCalculator(100, bar, plates.selectedPlates)).keys.toList();
+      expect(
+        expected(0),
+        isNot(expected(plates.barWeight)),
+        reason: 'fixture must tell them apart',
+      );
+
+      container.read(gymLogProvider.notifier).setWeight(100);
+      await tester.pump();
+      expect(shown(), expected(plates.barWeight));
+
+      container.read(plateCalculatorProvider.notifier).setBarless(log.exerciseId, true);
+      await tester.pump();
+      expect(shown(), expected(0));
+    });
+
     testWidgets('renders without crashing for the default slot entry page', (tester) async {
       seedLogPage(testdata.getTestRoutine());
       await pumpLogPage(tester);

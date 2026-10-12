@@ -136,7 +136,8 @@ class LogPage extends ConsumerWidget {
             ),
           ),
         ),
-        if (setConfigData.exercise.showPlateCalculator) const LogsPlatesWidget(),
+        if (setConfigData.exercise.showPlateCalculator)
+          LogsPlatesWidget(exercise: setConfigData.exercise),
         if (slotEntryPage.setConfigData!.comment.isNotEmpty)
           Text(slotEntryPage.setConfigData!.comment, textAlign: TextAlign.center),
         const SizedBox(height: 10),
@@ -183,7 +184,9 @@ class LogPage extends ConsumerWidget {
 }
 
 class LogsPlatesWidget extends ConsumerWidget {
-  const LogsPlatesWidget({super.key});
+  const LogsPlatesWidget({required this.exercise, super.key});
+
+  final Exercise exercise;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -192,7 +195,11 @@ class LogsPlatesWidget extends ConsumerWidget {
     // lags behind page changes; the set on screen is the source of truth
     final weight = ref.watch(gymLogProvider.select((log) => log?.weight)) ?? 0;
     final plates = groupPlates(
-      plateCalculator(weight, plateWeightsState.barWeight, plateWeightsState.selectedPlates),
+      plateCalculator(
+        weight,
+        plateWeightsState.barWeightFor(exercise.id),
+        plateWeightsState.selectedPlates,
+      ),
     );
 
     return Container(
@@ -201,7 +208,7 @@ class LogsPlatesWidget extends ConsumerWidget {
         children: [
           GestureDetector(
             onTap: () {
-              Navigator.of(context).pushNamed(ConfigurePlatesScreen.routeName);
+              Navigator.of(context).pushNamed(ConfigurePlatesScreen.routeName, arguments: exercise);
             },
             child: SizedBox(
               child: plates.isNotEmpty

@@ -72,6 +72,20 @@ void main() {
       expect(jsonDecode(saved)['barWeight'], 15);
     });
 
+    test('setBarless persists and survives a reload', () async {
+      container.read(plateCalculatorProvider.notifier).setBarless(42, true);
+      await pumpEventQueue();
+
+      final saved =
+          verify(mockPrefs.setString(PREFS_KEY_PLATES, captureAny)).captured.last as String;
+      final reloaded = PlateCalculatorState.fromJson(jsonDecode(saved));
+      expect(reloaded.barlessExercises, {42});
+      expect(reloaded.barWeightFor(42), 0);
+
+      container.read(plateCalculatorProvider.notifier).setBarless(42, false);
+      expect(container.read(plateCalculatorProvider).barlessExercises, isEmpty);
+    });
+
     test('setWeight updates totalWeight', () {
       notifier.setWeight(100);
       expect(notifier.state.totalWeight, 100);

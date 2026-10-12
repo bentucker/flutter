@@ -32,6 +32,11 @@
   "selectAvailablePlates": "Select available plates",
   "barWeight": "Bar weight",
   "useColors": "Use colors",
+  "plateCalculatorNoBar": "No bar (plate-loaded machine)",
+  "@plateCalculatorNoBar": {
+    "description": "Switch in the plate settings: the exercise is done on a plate-loaded machine, so no bar weight is subtracted"
+  },
+  "plateCalculatorNoBarHint": "Applies to this exercise only",
   "password": "Password",
   "@password": {},
   "confirmPassword": "Confirm password",
