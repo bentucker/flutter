@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -181,10 +182,12 @@ class PlateCalculatorNotifier extends Notifier<PlateCalculatorState> {
   void setBarWeight(num x) {
     _logger.fine('Setting bar weight to $x');
     state = state.copyWith(barWeight: x);
+    unawaited(saveToSharedPrefs());
   }
 
   void setUseColors(bool value) {
     state = state.copyWith(useColors: value);
+    unawaited(saveToSharedPrefs());
   }
 
   void unitChange({WeightUnitEnum? unit}) {
@@ -208,6 +211,7 @@ class PlateCalculatorNotifier extends Notifier<PlateCalculatorState> {
         selectedPlates: [...DEFAULT_LB_PLATES],
       );
     }
+    unawaited(saveToSharedPrefs());
   }
 
   void setWeight(num x) {

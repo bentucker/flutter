@@ -17,6 +17,7 @@
  */
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,15 +28,19 @@ import 'package:shared_preferences_platform_interface/in_memory_shared_preferenc
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
+import 'package:wger/features/routines/gym_mode.dart';
 import 'package:wger/features/routines/models/day_data.dart';
 import 'package:wger/features/routines/models/log.dart';
 import 'package:wger/features/routines/models/routine.dart';
 import 'package:wger/features/routines/models/set_config_data.dart';
 import 'package:wger/features/routines/models/slot_data.dart';
+import 'package:wger/features/routines/providers/gym_log_notifier.dart';
 import 'package:wger/features/routines/providers/gym_state.dart';
 import 'package:wger/features/routines/providers/gym_state_notifier.dart';
+import 'package:wger/features/routines/providers/plate_weights.dart';
 import 'package:wger/features/routines/providers/workout_logs_repository.dart';
 import 'package:wger/features/routines/widgets/gym_mode/log_page.dart';
+import 'package:wger/features/routines/widgets/plate_calculator.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
 import '../../../../../test_data/exercises.dart';
@@ -168,6 +173,37 @@ void main() {
       expect(notifier.state.getSlotEntryPageByIndex()!.type, SlotPageType.log);
       await pumpLogPage(tester);
       expect(find.byType(LogPage), findsOneWidget);
+    });
+
+    testWidgets('plates follow the weight of the set on screen without editing', (tester) async {
+      // Regression: the plate row only learned the weight from edits of the
+      // weight field, so a fresh page showed the previous page's plates, or
+      // "not possible" (no weight yet) until the field was touched.
+      seedLogPage(testdata.getTestRoutine());
+      await pumpLogPage(tester);
+
+      final weight = container.read(gymLogProvider)!.weight!;
+      final plates = container.read(plateCalculatorProvider);
+      final expected = groupPlates(
+        plateCalculator(weight, plates.barWeight, plates.selectedPlates),
+      );
+      expect(expected, isNotEmpty, reason: 'fixture weight $weight must be loadable');
+      expect(find.text('Not possible to reach weight with available plates'), findsNothing);
+      expect(find.byType(PlateWeight), findsNWidgets(expected.length));
+
+      // Another set on the same page widget (e.g. after a page change)
+      container
+          .read(gymLogProvider.notifier)
+          .setWeight(weight + 2 * plates.selectedPlates.reduce(max));
+      await tester.pump();
+      final updated = groupPlates(
+        plateCalculator(
+          weight + 2 * plates.selectedPlates.reduce(max),
+          plates.barWeight,
+          plates.selectedPlates,
+        ),
+      );
+      expect(find.byType(PlateWeight), findsNWidgets(updated.length));
     });
 
     testWidgets('renders without crashing for the default slot entry page', (tester) async {

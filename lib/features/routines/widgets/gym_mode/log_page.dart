@@ -25,6 +25,7 @@ import 'package:wger/core/snackbar.dart';
 import 'package:wger/core/widgets/core.dart';
 import 'package:wger/core/widgets/error.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
+import 'package:wger/features/routines/gym_mode.dart';
 import 'package:wger/features/routines/models/log.dart';
 import 'package:wger/features/routines/models/set_config_data.dart';
 import 'package:wger/features/routines/models/slot_entry.dart';
@@ -187,6 +188,12 @@ class LogsPlatesWidget extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final plateWeightsState = ref.watch(plateCalculatorProvider);
+    // The calculator's own total only follows edits of the weight field, so it
+    // lags behind page changes; the set on screen is the source of truth
+    final weight = ref.watch(gymLogProvider.select((log) => log?.weight)) ?? 0;
+    final plates = groupPlates(
+      plateCalculator(weight, plateWeightsState.barWeight, plateWeightsState.selectedPlates),
+    );
 
     return Container(
       color: Theme.of(context).colorScheme.onInverseSurface,
@@ -197,11 +204,11 @@ class LogsPlatesWidget extends ConsumerWidget {
               Navigator.of(context).pushNamed(ConfigurePlatesScreen.routeName);
             },
             child: SizedBox(
-              child: plateWeightsState.hasPlates
+              child: plates.isNotEmpty
                   ? Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        ...plateWeightsState.calculatePlates.entries.map(
+                        ...plates.entries.map(
                           (entry) => Row(
                             children: [
                               Text(entry.value.toString()),

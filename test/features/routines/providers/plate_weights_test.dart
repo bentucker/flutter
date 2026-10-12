@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,6 +61,15 @@ void main() {
       expect(notifier.state.selectedPlates, DEFAULT_KG_PLATES);
       expect(notifier.state.barWeight, DEFAULT_BAR_WEIGHT_KG);
       expect(notifier.state.availablePlates, notifier.state.availablePlatesKg);
+    });
+
+    test('setBarWeight persists the bar weight', () async {
+      container.read(plateCalculatorProvider.notifier).setBarWeight(15);
+      await pumpEventQueue();
+
+      final saved =
+          verify(mockPrefs.setString(PREFS_KEY_PLATES, captureAny)).captured.last as String;
+      expect(jsonDecode(saved)['barWeight'], 15);
     });
 
     test('setWeight updates totalWeight', () {
