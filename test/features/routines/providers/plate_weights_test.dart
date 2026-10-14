@@ -7,6 +7,8 @@ import 'package:mockito/annotations.dart'; // Added for annotations
 import 'package:mockito/mockito.dart'; // Added for mockito
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wger/core/consts.dart';
+import 'package:wger/features/account/models/user_profile.dart';
+import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/routines/providers/plate_weights.dart';
 
 import 'plate_weights_test.mocks.dart';
@@ -28,6 +30,8 @@ void main() {
           plateCalculatorProvider.overrideWith(
             () => PlateCalculatorNotifier(prefs: mockPrefs),
           ),
+          // The notifier reads the profile's unit when nothing is saved
+          userProfileProvider.overrideWith(() => _FakeProfile(null)),
         ],
       );
       notifier = container.read(plateCalculatorProvider.notifier);
@@ -84,6 +88,41 @@ void main() {
 
       container.read(plateCalculatorProvider.notifier).setBarless(42, false);
       expect(container.read(plateCalculatorProvider).barlessExercises, isEmpty);
+    });
+
+    group('without saved settings', () {
+      Future<PlateCalculatorState> loaded({String? unit, String? saved}) async {
+        when(mockPrefs.getString(PREFS_KEY_PLATES)).thenAnswer((_) async => saved);
+        final c = ProviderContainer.test(
+          overrides: [
+            plateCalculatorProvider.overrideWith(() => PlateCalculatorNotifier(prefs: mockPrefs)),
+            userProfileProvider.overrideWith(() => _FakeProfile(unit)),
+          ],
+        );
+        c.listen(plateCalculatorProvider, (_, _) {});
+        await pumpEventQueue();
+        return c.read(plateCalculatorProvider);
+      }
+
+      test('an imperial profile starts with lb plates and a 45 lb bar', () async {
+        final state = await loaded(unit: 'lb');
+
+        expect(state.isMetric, false);
+        expect(state.barWeight, DEFAULT_BAR_WEIGHT_LB);
+        expect(state.selectedPlates, DEFAULT_LB_PLATES);
+      });
+
+      test('a metric profile keeps the kg defaults', () async {
+        expect((await loaded(unit: 'kg')).isMetric, true);
+      });
+
+      test('saved settings win over the profile unit', () async {
+        final saved = jsonEncode(PlateCalculatorState(isMetric: true, barWeight: 15).toJson());
+        final state = await loaded(unit: 'lb', saved: saved);
+
+        expect(state.isMetric, true);
+        expect(state.barWeight, 15);
+      });
     });
 
     test('setWeight updates totalWeight', () {
@@ -154,4 +193,14 @@ void main() {
       expect(imperialState.getColor(25), Colors.grey);
     });
   });
+}
+
+class _FakeProfile extends UserProfileNotifier {
+  _FakeProfile(this._unit);
+
+  final String? _unit;
+
+  @override
+  Stream<UserProfile?> build() =>
+      Stream.value(_unit == null ? null : UserProfile(id: 1, weightUnitStr: _unit));
 }

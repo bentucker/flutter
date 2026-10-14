@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:wger/features/account/models/user_profile.dart';
+import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/exercises/models/exercise.dart';
 import 'package:wger/features/routines/providers/plate_weights.dart';
 import 'package:wger/features/routines/widgets/plate_calculator.dart';
@@ -36,6 +38,8 @@ void main() {
     container = ProviderContainer(
       overrides: [
         plateCalculatorProvider.overrideWith(() => PlateCalculatorNotifier()),
+        // The notifier reads the profile's unit when nothing is saved
+        userProfileProvider.overrideWith(() => _NoProfile()),
       ],
     );
   });
@@ -116,4 +120,9 @@ void main() {
       expect(notifier.state.selectedPlates.contains(5.0), isFalse);
     },
   );
+}
+
+class _NoProfile extends UserProfileNotifier {
+  @override
+  Stream<UserProfile?> build() => Stream.value(null);
 }

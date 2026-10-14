@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wger/core/consts.dart';
+import 'package:wger/core/helpers.dart';
 import 'package:wger/core/shared_preferences.dart';
+import 'package:wger/features/account/providers/user_profile_notifier.dart';
 import 'package:wger/features/routines/gym_mode.dart';
 
 const DEFAULT_KG_PLATES = [2.5, 5, 10, 15, 20, 25];
@@ -179,6 +181,23 @@ class PlateCalculatorNotifier extends Notifier<PlateCalculatorState> {
         _logger.fine('Error decoding plate data from SharedPreferences: $e');
         state = PlateCalculatorState();
       }
+      return;
+    }
+
+    // Nothing saved yet: start in the unit of the user's profile instead of
+    // always in kg, where an imperial user sees kg plates and a 20 kg bar
+    try {
+      final profile = await ref.awaitFirstValue(userProfileProvider);
+      if (profile == null || profile.isMetric) {
+        return;
+      }
+      // Every settings change saves, so a value saved meanwhile is the user's
+      final savedMeanwhile = await _prefs.getString(PREFS_KEY_PLATES) != null;
+      if (ref.mounted && !savedMeanwhile) {
+        state = PlateCalculatorState(isMetric: false);
+      }
+    } catch (e) {
+      _logger.fine('Profile unit unavailable, keeping the default plates: $e');
     }
   }
 
